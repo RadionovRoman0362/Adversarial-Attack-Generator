@@ -101,7 +101,7 @@ def main(config_path: str):
             attack_config['epsilon'] = exp_config['epsilon']
             attack_config['steps'] = exp_config['steps']
 
-            results = evaluate_config(attack_config, model_wrapper, dataloader, device)
+            results, _ = evaluate_config(attack_config, model_wrapper, dataloader, device)
             trial.set_user_attr("full_results", results)
 
             return results.get("attack_success_rate", -1.0)

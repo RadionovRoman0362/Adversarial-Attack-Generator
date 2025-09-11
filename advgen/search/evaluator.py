@@ -51,8 +51,9 @@ def evaluate_config(
         attack_config: Dict[str, Any],
         model_wrapper: ModelWrapper,
         dataloader: DataLoader,
-        device: torch.device
-) -> Dict[str, Any]:
+        device: torch.device,
+        num_examples_to_return: int = 0
+) -> tuple[dict[str, Any], list | None]:
     """
     Оценивает одну полную конфигурацию состязательной атаки.
 
@@ -68,6 +69,7 @@ def evaluate_config(
     :param model_wrapper: Обертка над атакуемой моделью.
     :param dataloader: DataLoader с тестовыми данными.
     :param device: Устройство, на котором будут производиться вычисления ('cpu' или 'cuda').
+    :param num_examples_to_return: Количество изображений, которое надо сохранить.
     :return: Словарь с итоговыми метриками по всему датасету.
     """
     processed_attack_config = _preprocess_config(attack_config)
@@ -82,7 +84,7 @@ def evaluate_config(
             "attack_success_rate": -1.0,
             "robust_accuracy": -1.0,
             "error": str(e)
-        }
+        }, None
 
     total_initially_correct = 0
     total_successful_attacks = 0
@@ -90,9 +92,11 @@ def evaluate_config(
     cumulative_l2 = 0.0
     cumulative_l1 = 0.0
 
+    examples_to_return = []
+
     pbar = tqdm(dataloader, desc="Оценка атаки", leave=False, dynamic_ncols=True)
 
-    for images, labels in pbar:
+    for i, (images, labels) in enumerate(pbar):
         images, labels = images.to(device), labels.to(device)
 
         with autocast('cuda', dtype=torch.float16):
@@ -113,6 +117,21 @@ def evaluate_config(
         cumulative_linf += batch_linf
         cumulative_l2 += batch_l2
         cumulative_l1 += batch_l1
+
+        if i == 0 and num_examples_to_return > 0:
+            clean_logits = model_wrapper(images)
+            clean_preds = torch.argmax(clean_logits, dim=1)
+            adv_logits = model_wrapper(adv_images)
+            adv_preds = torch.argmax(adv_logits, dim=1)
+
+            for j in range(min(num_examples_to_return, len(images))):
+                examples_to_return.append({
+                    "original_image": images[j].cpu(),
+                    "adv_image": adv_images[j].cpu(),
+                    "label": labels[j].cpu().item(),
+                    "clean_pred": clean_preds[j].cpu().item(),
+                    "adv_pred": adv_preds[j].cpu().item()
+                })
 
         current_asr = get_attack_success_rate(total_successful_attacks, total_initially_correct)
         pbar.set_postfix(CurrentASR=f"{current_asr:.3f}")
@@ -139,4 +158,4 @@ def evaluate_config(
                 f"RobustAcc={results['robust_accuracy']:.4f}, "
                 f"Avg L2={results['avg_l2_norm']:.4f}")
 
-    return results
+    return results, examples_to_return if examples_to_return else None

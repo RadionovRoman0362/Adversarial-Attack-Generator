@@ -1,0 +1,35 @@
+fgsm:
+  loss:
+    name: cross_entropy
+  gradient:
+    name: standard
+  updater:
+    name: sign
+  initializer:
+    name: zero
+  projector:
+    name: linf
+  scheduler:
+    name: fixed
+    params:
+      step_size: 0.03137
+  steps: 1
+  epsilon: 0.03137
+
+pgd_10:
+  loss:
+    name: cross_entropy
+  gradient:
+    name: standard
+  updater:
+    name: sign
+  initializer:
+    name: random_linf
+  projector:
+    name: linf
+  scheduler:
+    name: fixed
+    params:
+      step_size: 0.00784
+  steps: 10
+  epsilon: 0.03137
