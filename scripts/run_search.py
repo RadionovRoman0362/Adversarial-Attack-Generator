@@ -22,6 +22,7 @@ import sys
 from datetime import datetime
 from typing import Dict, Any
 import gc
+import optuna
 
 import torch
 import torch.nn as nn
@@ -32,7 +33,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from advgen.models import resnet_cifar
 from advgen.training.utils import load_checkpoint
 from advgen.core.model_wrapper import ModelWrapper
-from advgen.search.samplers import RandomSampler
+from advgen.search.samplers import RandomSampler, OptunaSampler
 from advgen.search.evaluator import evaluate_config
 from advgen.utils.data_loader import get_dataloader, DATASET_STATS
 from advgen.utils.logging_setup import setup_logging
@@ -82,7 +83,58 @@ def main(config_path: str):
         num_workers=exp_config['dataset'].get('num_workers', 4)
     )
 
-    sampler = RandomSampler(exp_config['search_space_path'])
+    search_config = exp_config.get('search', {})
+    sampler_type = search_config.get('sampler', 'random')
+    num_trials = exp_config['num_trials']
+
+    all_trials_results = []
+    best_config_info = {"attack_success_rate": -1.0}
+
+    if sampler_type == 'optuna':
+        logger.info("Запуск поиска с использованием Optuna (байесовская оптимизация).")
+        optuna_sampler = OptunaSampler(exp_config['search_space_path'])
+
+        def objective(trial: optuna.Trial):
+            logger.info(f"--- Прогон {trial.number + 1}/{num_trials} (Optuna) ---")
+
+            attack_config = optuna_sampler.sample(trial, norm=exp_config['norm'])
+            attack_config['epsilon'] = exp_config['epsilon']
+            attack_config['steps'] = exp_config['steps']
+
+            results = evaluate_config(attack_config, model_wrapper, dataloader, device)
+            trial.set_user_attr("full_results", results)
+
+            return results.get("attack_success_rate", -1.0)
+
+        study = optuna.create_study(direction=search_config.get('direction', 'maximize'))
+        study.optimize(objective, n_trials=num_trials)
+
+        best_trial = study.best_trial
+        best_config_info = best_trial.user_attrs.get("full_results", {})
+        all_trials_results = [t.user_attrs.get("full_results") for t in study.trials if "full_results" in t.user_attrs]
+
+    elif sampler_type == 'random':
+        logger.info("Запуск поиска с использованием Random Sampler (случайный перебор).")
+        sampler = RandomSampler(exp_config['search_space_path'])
+
+        for i in range(num_trials):
+            logger.info(f"--- Прогон {i + 1}/{num_trials} (Random) ---")
+            attack_config = sampler.sample(norm=exp_config['norm'])
+            attack_config['epsilon'] = exp_config['epsilon']
+            attack_config['steps'] = exp_config['steps']
+
+            results = evaluate_config(attack_config, model_wrapper, dataloader, device)
+            all_trials_results.append(results)
+
+            current_asr = results.get("attack_success_rate", -1.0)
+            if current_asr > best_config_info["attack_success_rate"]:
+                best_config_info = results
+                logger.info(
+                    f"*** Найдена новая лучшая конфигурация! "
+                    f"ASR: {current_asr:.4f} ***"
+                )
+    else:
+        raise ValueError(f"Неизвестный тип сэмплера: '{sampler_type}'. Доступны: 'random', 'optuna'.")
 
     results_dir = exp_config.get('results_dir', './results')
     os.makedirs(results_dir, exist_ok=True)
@@ -90,35 +142,6 @@ def main(config_path: str):
     results_filename = f"search_results_{timestamp}.json"
     results_filepath = os.path.join(results_dir, results_filename)
     logger.info(f"Результаты будут сохраняться в: {results_filepath}")
-
-    all_trials_results = []
-    best_config_info = {"attack_success_rate": -1.0}
-
-    num_trials = exp_config['num_trials']
-    logger.info(f"Начало поиска. Количество прогонов: {num_trials}")
-
-    for i in range(num_trials):
-        logger.info(f"--- Прогон {i + 1}/{num_trials} ---")
-
-        attack_config = sampler.sample(norm=exp_config['norm'])
-
-        attack_config['epsilon'] = exp_config['epsilon']
-        attack_config['steps'] = exp_config['steps']
-
-        results = evaluate_config(attack_config, model_wrapper, dataloader, device)
-
-        torch.cuda.empty_cache()
-        gc.collect()
-
-        all_trials_results.append(results)
-
-        current_asr = results.get("attack_success_rate", -1.0)
-        if current_asr > best_config_info["attack_success_rate"]:
-            best_config_info = results
-            logger.info(
-                f"*** Найдена новая лучшая конфигурация! "
-                f"ASR: {current_asr:.4f} ***"
-            )
 
     final_results_summary = {
         "best_performing_attack": best_config_info,
@@ -130,12 +153,15 @@ def main(config_path: str):
         json.dump(final_results_summary, f, indent=4, ensure_ascii=False)
 
     logger.info("--- Поиск завершен ---")
-    logger.info(f"Лучший Attack Success Rate (ASR): {best_config_info['attack_success_rate']:.4f}")
-    logger.info("Лучшая найденная конфигурация:")
+    if best_config_info["attack_success_rate"] > -1.0:
+        logger.info(f"Лучший Attack Success Rate (ASR): {best_config_info['attack_success_rate']:.4f}")
+        logger.info("Лучшая найденная конфигурация:")
 
-    best_config_str = yaml.dump(best_config_info.get("processed_config", {}), indent=2)
-    for line in best_config_str.splitlines():
-        logger.info(f"  {line}")
+        best_config_str = yaml.dump(best_config_info.get("processed_config", {}), indent=2)
+        for line in best_config_str.splitlines():
+            logger.info(f"  {line}")
+    else:
+        logger.warning("Не удалось найти ни одной успешной конфигурации.")
 
 
 if __name__ == '__main__':

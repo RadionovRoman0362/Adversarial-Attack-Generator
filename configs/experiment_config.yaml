@@ -1,4 +1,7 @@
 # --- Параметры Поиска ---
+search:
+  sampler: "optuna"
+  direction: "maximize"
 num_trials: 100         # Сколько случайных конфигураций протестировать
 num_eval_samples: 1000  # На скольких примерах оценивать каждую конфигурацию
 search_space_path: "configs/search_space.yaml"
