@@ -1,0 +1,27 @@
+# --- Модель и Данные ---
+model_name: "resnet18_cifar"
+dataset_name: "cifar10"
+num_classes: 10
+data_dir: "./data"
+checkpoint_dir: "./checkpoints"
+
+# --- Параметры обучения ---
+epochs: 50
+batch_size: 256
+num_workers: 8
+device: "cuda"
+
+# --- Оптимизатор (SGD) ---
+optimizer:
+  name: "sgd"
+  params:
+    lr: 0.1
+    momentum: 0.9
+    weight_decay: 0.0005
+
+# --- Планировщик шага (StepLR) ---
+scheduler:
+  name: "steplr"
+  params:
+    step_size: 15
+    gamma: 0.1

@@ -1,0 +1,215 @@
+"""
+Этот модуль содержит конкретные реализации методов вычисления и/или
+модификации градиента. Градиент определяет направление атаки, и его
+обработка является ключевым фактором эффективности и переносимости.
+
+Все классы наследуются от `GradientComputer` из `base.py`.
+"""
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from typing import Optional
+
+from .base import GradientComputer, Loss
+
+
+class StandardGradient(GradientComputer):
+    """
+    Базовый метод: вычисляет градиент функции потерь по входу.
+    """
+
+    def compute(
+            self,
+            model: nn.Module,
+            images: torch.Tensor,
+            labels: torch.Tensor,
+            loss_fn: Loss
+    ) -> torch.Tensor:
+        images.requires_grad = True
+        logits = model(images)
+        loss = loss_fn(logits, labels)
+        model.zero_grad()
+        loss.backward()
+        return images.grad.data
+
+
+class MomentumGradient(GradientComputer):
+    """
+    Вычисляет градиент с использованием момента (Momentum Iterative Method).
+    Стабилизирует направление атаки и улучшает переносимость.
+    """
+
+    def __init__(self, decay_factor: float = 1.0):
+        super().__init__()
+        self.decay_factor = decay_factor
+        self.previous_grad: Optional[torch.Tensor] = None
+
+    def compute(
+            self,
+            model: nn.Module,
+            images: torch.Tensor,
+            labels: torch.Tensor,
+            loss_fn: Loss
+    ) -> torch.Tensor:
+        images.requires_grad = True
+        logits = model(images)
+        loss = loss_fn(logits, labels)
+        model.zero_grad()
+        loss.backward()
+
+        grad = images.grad.data
+
+        grad_norm = torch.mean(torch.abs(grad), dim=(1, 2, 3), keepdim=True)
+        grad = grad / (grad_norm + 1e-12)
+
+        if self.previous_grad is None:
+            self.previous_grad = torch.zeros_like(grad)
+
+        if self.previous_grad is None or self.previous_grad.shape != grad.shape or self.previous_grad.device != grad.device:
+            self.previous_grad = torch.zeros_like(grad)
+
+        self.previous_grad = self.decay_factor * self.previous_grad + grad
+
+        return self.previous_grad
+
+    def reset(self):
+        """Сбрасывает накопленный градиент."""
+        self.previous_grad = None
+
+
+class AdversarialGradientSmoothing(GradientComputer):
+    """
+    Сглаживание градиента путем усреднения по нескольким зашумленным
+    копиям входного изображения. Повышает робастность градиента.
+    """
+
+    def __init__(self, num_samples: int = 5, noise_stddev: float = 0.1):
+        super().__init__()
+        self.num_samples = num_samples
+        self.noise_stddev = noise_stddev
+
+    def compute(
+            self,
+            model: nn.Module,
+            images: torch.Tensor,
+            labels: torch.Tensor,
+            loss_fn: Loss
+    ) -> torch.Tensor:
+        if self.num_samples <= 1 or self.noise_stddev == 0:
+            return StandardGradient().compute(model, images, labels, loss_fn)
+
+        cumulative_grad = torch.zeros_like(images)
+
+        for i in range(self.num_samples):
+            noise = torch.randn_like(images) * self.noise_stddev
+
+            noisy_images = (images.detach() + noise).requires_grad_(True)
+
+            logits = model(noisy_images)
+            loss = loss_fn(logits, labels)
+
+            grad, = torch.autograd.grad(
+                outputs=loss,
+                inputs=noisy_images,
+                only_inputs=True
+            )
+
+            cumulative_grad += grad
+
+        avg_grad = cumulative_grad / self.num_samples
+
+        return avg_grad
+
+
+class InputDiversityGradient(GradientComputer):
+    """
+    Применяет случайные трансформации (resize, padding) к входу
+    перед вычислением градиента для повышения переносимости.
+    """
+
+    def __init__(self, prob: float = 0.7, resize_factor_min: float = 0.8, resize_factor_max: float = 1.0):
+        super().__init__()
+        self.prob = prob
+        self.resize_factor_min = resize_factor_min
+        self.resize_factor_max = resize_factor_max
+
+    def transform(self, x: torch.Tensor) -> torch.Tensor:
+        if torch.rand(1).item() > self.prob:
+            return x
+
+        img_size = x.shape[-1]
+        resize_factor = torch.rand(1).item() * (
+                    self.resize_factor_max - self.resize_factor_min) + self.resize_factor_min
+        new_size = int(img_size * resize_factor)
+
+        resized_x = F.interpolate(x, size=new_size, mode='bilinear', align_corners=False)
+
+        delta = img_size - new_size
+        padding_top = torch.randint(0, delta + 1, (1,)).item()
+        padding_bottom = delta - padding_top
+        padding_left = torch.randint(0, delta + 1, (1,)).item()
+        padding_right = delta - padding_left
+
+        return F.pad(resized_x, (padding_left, padding_right, padding_top, padding_bottom), mode='constant', value=0)
+
+    def compute(
+            self,
+            model: nn.Module,
+            images: torch.Tensor,
+            labels: torch.Tensor,
+            loss_fn: Loss
+    ) -> torch.Tensor:
+        images_clone = images.clone().detach().requires_grad_(True)
+        transformed_images = self.transform(images_clone)
+
+        logits = model(transformed_images)
+        loss = loss_fn(logits, labels)
+        grad, = torch.autograd.grad(loss, images_clone)
+        return grad
+
+
+class TranslationInvariantGradient(GradientComputer):
+    """
+    Усредняет градиенты по сдвинутым версиям изображения, чтобы
+    сделать атаку инвариантной к сдвигам. Реализовано через свертку.
+    """
+
+    def __init__(self, kernel_size: int = 5, sigma: float = 1.0):
+        super().__init__()
+        self.kernel = self.get_gaussian_kernel(kernel_size, sigma)
+
+    @staticmethod
+    def get_gaussian_kernel(kernel_size: int, sigma: float) -> torch.Tensor:
+        """Создает Гауссово ядро для свертки."""
+        coords = torch.arange(kernel_size, dtype=torch.float32)
+        coords -= kernel_size // 2
+        g = coords.pow(2)
+        g = (-g / (2 * sigma ** 2)).exp()
+        g /= g.sum()
+        kernel = g.outer(g)
+        return kernel.unsqueeze(0).unsqueeze(0)
+
+    def compute(
+            self,
+            model: nn.Module,
+            images: torch.Tensor,
+            labels: torch.Tensor,
+            loss_fn: Loss
+    ) -> torch.Tensor:
+        images.requires_grad = True
+        logits = model(images)
+        loss = loss_fn(logits, labels)
+        model.zero_grad()
+        loss.backward()
+
+        grad = images.grad.data
+
+        kernel = self.kernel.to(grad.device)
+        num_channels = grad.shape[1]
+
+        depthwise_kernel = kernel.repeat(num_channels, 1, 1, 1)
+
+        smoothed_grad = F.conv2d(grad, depthwise_kernel, groups=num_channels, padding='same')
+
+        return smoothed_grad

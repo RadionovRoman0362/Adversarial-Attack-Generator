@@ -1,0 +1,24 @@
+# --- Параметры Поиска ---
+num_trials: 100         # Сколько случайных конфигураций протестировать
+num_eval_samples: 1000  # На скольких примерах оценивать каждую конфигурацию
+search_space_path: "configs/search_space.yaml"
+results_dir: "./results" # Директория для сохранения результатов
+
+# --- Параметры Атаки (общие для всех прогонов) ---
+epsilon: 0.03137 # 8/255
+steps: 20
+norm: "linf" # Указываем, какую норму будем исследовать в этом поиске
+
+# --- Модель для Атаки ---
+model:
+  name: "resnet18_cifar"
+  num_classes: 10
+  # Путь к ЛУЧШЕМУ сохраненному чекпоинту после обучения
+  checkpoint_path: "./checkpoints/model_best.pth.tar" 
+
+# --- Датасет для Атаки ---
+dataset:
+  name: "cifar10"
+  data_dir: "./data"
+  batch_size: 256
+  num_workers: 8
