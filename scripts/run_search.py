@@ -37,6 +37,45 @@ from advgen.utils.data_loader import get_dataloader, DATASET_STATS
 from advgen.utils.logging_setup import setup_logging
 
 
+def find_pareto_front(all_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Находит фронт Парето из списка результатов.
+    Критерии: (maximize ASR, minimize L2).
+    """
+    pareto_front = []
+    for candidate in all_results:
+        if candidate.get('error'):
+            continue
+
+        candidate_asr = candidate.get("attack_success_rate", -1.0)
+        candidate_l2 = candidate.get("avg_l2_norm", float('inf'))
+
+        is_dominated = False
+        for member in pareto_front:
+            member_asr = member.get("attack_success_rate", -1.0)
+            member_l2 = member.get("avg_l2_norm", float('inf'))
+
+            if (member_asr >= candidate_asr and member_l2 <= candidate_l2) and \
+                    (member_asr > candidate_asr or member_l2 < candidate_l2):
+                is_dominated = True
+                break
+
+        if is_dominated:
+            continue
+
+        pareto_front = [
+            member for member in pareto_front
+            if not ((candidate_asr >= member.get("attack_success_rate", -1.0) and
+                     candidate_l2 <= member.get("avg_l2_norm", float('inf'))) and
+                    (candidate_asr > member.get("attack_success_rate", -1.0) or
+                     candidate_l2 < member.get("avg_l2_norm", float('inf'))))
+        ]
+
+        pareto_front.append(candidate)
+
+    return pareto_front
+
+
 def find_best_trial(trials: List[optuna.Trial]) -> optuna.Trial:
     """
     Находит лучший trial по двум критериям:
@@ -134,17 +173,23 @@ def main(config_path: str):
             results, _ = evaluate_config(attack_config, model_wrapper, dataloader, device)
             trial.set_user_attr("full_results", results)
 
-            return results.get("attack_success_rate", -1.0)
+            asr = results.get("attack_success_rate", -1.0)
+            l2_norm = results.get("avg_l2_norm", float('inf'))
+            return asr, l2_norm
 
-        study = optuna.create_study(direction=search_config.get('direction', 'maximize'))
+        study = optuna.create_study(directions=["maximize", "minimize"])
         study.optimize(objective, n_trials=num_trials)
 
-        logger.info("Анализ всех прогонов для выбора лучшего по двум критериям (ASR, L2)...")
-        best_trial = find_best_trial(study.trials)
+        pareto_front_trials = study.best_trials
+        logger.info(f"Найдено {len(pareto_front_trials)} оптимальных по Парето решений.")
 
+        pareto_front_results = [t.user_attrs.get("full_results") for t in pareto_front_trials if
+                                "full_results" in t.user_attrs]
+        all_trials_results = [t.user_attrs.get("full_results") for t in study.trials if "full_results" in t.user_attrs]
+
+        best_trial = find_best_trial(pareto_front_trials)
         if best_trial:
             best_config_info = best_trial.user_attrs.get("full_results", {})
-        all_trials_results = [t.user_attrs.get("full_results") for t in study.trials if "full_results" in t.user_attrs]
 
     elif sampler_type == 'random':
         logger.info("Запуск поиска с использованием Random Sampler (случайный перебор).")
@@ -180,6 +225,15 @@ def main(config_path: str):
                     f"*** Найдена новая лучшая конфигурация! "
                     f"Причина: {update_reason} ***"
                 )
+
+        logger.info("Поиск фронта Парето из всех случайных прогонов...")
+        pareto_front_results = find_pareto_front(all_trials_results)
+        logger.info(f"Найдено {len(pareto_front_results)} оптимальных по Парето решений.")
+
+        if pareto_front_results:
+            best_config_info = max(pareto_front_results, key=lambda r: r.get('attack_success_rate', -1.0))
+        else:
+            best_config_info = {"attack_success_rate": -1.0}
     else:
         raise ValueError(f"Неизвестный тип сэмплера: '{sampler_type}'. Доступны: 'random', 'optuna'.")
 
@@ -192,6 +246,7 @@ def main(config_path: str):
 
     final_results_summary = {
         "best_performing_attack": best_config_info,
+        "pareto_front": pareto_front_results,
         "all_trials": all_trials_results,
         "experiment_config": exp_config
     }

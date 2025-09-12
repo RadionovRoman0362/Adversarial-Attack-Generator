@@ -17,6 +17,7 @@
 import argparse
 import json
 import logging
+import optuna
 import os
 import sys
 from typing import Dict, Any, List
@@ -27,6 +28,7 @@ import pandas as pd
 import seaborn as sns
 import torch
 import torch.nn as nn
+import torchvision.models as models
 import yaml
 
 # Добавляем корневую директорию проекта в PYTHONPATH
@@ -42,6 +44,42 @@ from advgen.utils.logging_setup import setup_logging
 
 
 # --- Функции для визуализации ---
+
+def plot_pareto_front(all_trials_df: pd.DataFrame, pareto_front_df: pd.DataFrame, save_path: str):
+    """Строит диаграмму рассеяния, выделяя фронт Парето."""
+    plt.figure(figsize=(12, 8))
+    sns.set_theme(style="whitegrid")
+
+    # Рисуем все точки
+    sns.scatterplot(
+        data=all_trials_df,
+        x='avg_l2_norm',
+        y='attack_success_rate',
+        color='gray',
+        alpha=0.5,
+        label='Все прогоны'
+    )
+
+    # Выделяем точки с фронта Парето
+    sns.scatterplot(
+        data=pareto_front_df,
+        x='avg_l2_norm',
+        y='attack_success_rate',
+        color='red',
+        s=100,  # Размер точек
+        edgecolor='black',
+        label='Фронт Парето'
+    )
+
+    plt.title("Фронт Парето: компромисс между ASR и L2-нормой", fontsize=16)
+    plt.xlabel("Средняя L2-норма (меньше = лучше)")
+    plt.ylabel("Attack Success Rate (больше = лучше)")
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(save_path)
+    plt.close()
+    logging.info(f"График фронта Парето сохранен в: {save_path}")
+
 
 def plot_attack_examples(
     visual_examples: List[Dict[str, Any]],
@@ -137,8 +175,15 @@ def plot_comparison_barchart(df: pd.DataFrame, save_path: str):
 def get_model(config: Dict[str, Any]) -> nn.Module:
     model_name = config['name']
     num_classes = config.get('num_classes', 10)
+    pretrained = config.get('pretrained', False)
     if model_name == 'resnet18_cifar':
-        return resnet_cifar.resnet18_cifar(num_classes=num_classes, pretrained=False)
+        return resnet_cifar.resnet18_cifar(num_classes=num_classes, pretrained=pretrained)
+    elif model_name == 'resnet18_imagenet':
+        weights = models.ResNet18_Weights.IMAGENET1K_V1 if pretrained else None
+        model = models.resnet18(weights=weights)
+        num_ftrs = model.fc.in_features
+        model.fc = nn.Linear(num_ftrs, num_classes)
+        return model
     else:
         raise NotImplementedError(f"Модель '{model_name}' не поддерживается.")
 
@@ -162,8 +207,101 @@ def main(results_path: str):
 
     # --- 2. Визуализация процесса поиска (только для Optuna) ---
     if exp_config.get('search', {}).get('sampler') == 'optuna':
-        # (Код для визуализации Optuna остается без изменений)
-        pass # Упрощено для краткости, код из предыдущего ответа здесь
+        logger.info("--- 2. Генерация графиков анализа Optuna ---")
+        try:
+            # Optuna не имеет встроенной функции для загрузки study из JSON.
+            # Мы "воссоздаем" его, добавляя каждый trial из нашего лог-файла.
+            # Это позволяет использовать мощные встроенные функции визуализации Optuna.
+
+            search_directions = exp_config['search'].get('directions', ["maximize"])
+            study = optuna.create_study(directions=search_directions)
+
+            all_trials_data = results_data.get('all_trials', [])
+
+            # Перед добавлением нужно убедиться, что все параметры плоские,
+            # так как Optuna не работает с вложенными словарями параметров.
+            flat_trials_data = []
+            for trial_data in all_trials_data:
+                if trial_data.get('error'):
+                    continue  # Пропускаем неудачные прогоны
+
+                # Используем pandas для "уплощения" вложенного словаря
+                flat_params = pd.json_normalize(
+                    trial_data['processed_config'], sep='_'
+                ).to_dict(orient='records')[0]
+
+                # Определяем, какие значения вернуть (одно или несколько)
+                if len(search_directions) > 1:
+                    values = [
+                        trial_data.get("attack_success_rate", -1.0),
+                        trial_data.get("avg_l2_norm", float('inf'))
+                    ]
+                else:
+                    values = [trial_data.get("attack_success_rate", -1.0)]
+
+                flat_trials_data.append({
+                    "values": values,
+                    "params": flat_params,
+                    "user_attrs": {"full_results": trial_data}  # Сохраняем оригинальные данные
+                })
+
+            # Добавляем воссозданные trials в study
+            for trial_info in flat_trials_data:
+                study.add_trial(
+                    optuna.create_trial(
+                        values=trial_info["values"],
+                        params=trial_info["params"],
+                        user_attrs=trial_info["user_attrs"]
+                    )
+                )
+
+            logger.info(f"Study успешно воссоздан с {len(study.trials)} прогонами.")
+
+            # Генерация и сохранение графиков
+            # 1. История оптимизации (показывает, как улучшалась метрика со временем)
+            fig_history = study.plot_optimization_history()
+            fig_history.write_image(os.path.join(plots_dir, "optuna_history.png"))
+
+            # 2. Важность гиперпараметров (какие параметры больше всего влияли на результат)
+            # Эта визуализация работает только для однокритериальной оптимизации
+            if len(search_directions) == 1:
+                try:
+                    fig_importance = study.plot_param_importances()
+                    fig_importance.write_image(os.path.join(plots_dir, "optuna_importances.png"))
+                except Exception as e:
+                    logger.warning(f"Не удалось построить график важности параметров: {e}")
+
+            # 3. Срезы параметров (показывает, как конкретный параметр влияет на результат)
+            # Выберем несколько интересных параметров для визуализации
+            slice_params_to_plot = [
+                'loss_name',
+                'gradient_name',
+                'scheduler_cosine_params_initial_step_size',
+                'updater_name'
+            ]
+            for param in slice_params_to_plot:
+                # Проверяем, существует ли параметр в исследовании, прежде чем строить график
+                if param in study.best_params or any(param in t.params for t in study.trials):
+                    try:
+                        fig_slice = study.plot_slice(params=[param])
+                        fig_slice.write_image(os.path.join(plots_dir, f"optuna_slice_{param}.png"))
+                    except Exception as e:
+                        logger.warning(f"Не удалось построить срез для параметра '{param}': {e}")
+                else:
+                    logger.debug(f"Параметр '{param}' не найден в исследовании, пропускаем срез.")
+
+            logger.info("Графики анализа Optuna успешно сохранены.")
+
+        except Exception as e:
+            logger.error(f"Произошла ошибка при генерации графиков Optuna: {e}")
+
+    if "pareto_front" in results_data and "all_trials" in results_data:
+        logger.info("--- 2.5. Визуализация фронта Парето ---")
+        all_trials_df = pd.DataFrame(results_data['all_trials']).dropna()
+        pareto_front_df = pd.DataFrame(results_data['pareto_front']).dropna()
+
+        if not pareto_front_df.empty:
+            plot_pareto_front(all_trials_df, pareto_front_df, os.path.join(plots_dir, "pareto_front.png"))
 
     # --- 3. Подготовка к сравнению атак ---
     logger.info("--- 3. Подготовка модели и данных для сравнения ---")
