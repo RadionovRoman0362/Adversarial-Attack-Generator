@@ -1,0 +1,31 @@
+# --- Параметры Поиска ---
+search:
+  sampler: "evolutionary"
+  params:
+    population_size: 25
+    mutation_rate: 0.1
+    tournament_size: 3
+
+num_trials: 50         # Сколько случайных конфигураций протестировать
+num_eval_samples: 500  # На скольких примерах оценивать каждую конфигурацию
+search_space_path: "configs/search_space.yaml"
+results_dir: "./results_evolutionary" # Директория для сохранения результатов
+
+# --- Параметры Атаки (общие для всех прогонов) ---
+epsilon: 0.03137 # 8/255
+steps: 20
+norm: "linf" # Указываем, какую норму будем исследовать в этом поиске
+
+# --- Модель для Атаки ---
+model:
+  name: "resnet18_imagenet"
+  num_classes: 10
+  # Путь к ЛУЧШЕМУ сохраненному чекпоинту после обучения
+  checkpoint_path: "./checkpoints_imagenette/model_best.pth.tar"
+
+# --- Датасет для Атаки ---
+dataset:
+  name: "imagenette"
+  data_dir: "./data"
+  batch_size: 64
+  num_workers: 8

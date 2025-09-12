@@ -1,8 +1,8 @@
 search:
   sampler: "optuna"
   direction: "maximize"
-num_trials: 100
-num_eval_samples: 1000
+num_trials: 50
+num_eval_samples: 500
 search_space_path: "configs/search_space.yaml"
 results_dir: "./results_imagenette" # <-- Новая папка для результатов
 
@@ -19,5 +19,4 @@ dataset:
   name: "imagenette" # <-- Новый датасет
   data_dir: "./data"
   batch_size: 64 # <-- Уменьшенный батч
-  num_workers: 8
   num_workers: 8

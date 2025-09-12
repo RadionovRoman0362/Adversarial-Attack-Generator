@@ -52,7 +52,8 @@ def evaluate_config(
         model_wrapper: ModelWrapper,
         dataloader: DataLoader,
         device: torch.device,
-        num_examples_to_return: int = 0
+        num_examples_to_return: int = 0,
+        progress_info: str = ""
 ) -> tuple[dict[str, Any], list | None]:
     """
     Оценивает одну полную конфигурацию состязательной атаки.
@@ -70,13 +71,15 @@ def evaluate_config(
     :param dataloader: DataLoader с тестовыми данными.
     :param device: Устройство, на котором будут производиться вычисления ('cpu' или 'cuda').
     :param num_examples_to_return: Количество изображений, которое надо сохранить.
+    :param progress_info: Номер текущего индивида для эволюционного алгоритма.
     :return: Словарь с итоговыми метриками по всему датасету.
     """
     processed_attack_config = _preprocess_config(attack_config)
 
     try:
         attack_runner = AttackRunner(processed_attack_config)
-        logger.info(f"Оценка конфигурации: {attack_runner}")
+        progress_prefix = f"{progress_info} | " if progress_info else ""
+        logger.info(f"{progress_prefix}Оценка конфигурации: {attack_runner}")
     except (ValueError, TypeError) as e:
         logger.error(f"Не удалось создать AttackRunner с данной конфигурацией. Ошибка: {e}")
         logger.debug(f"Проблемная конфигурация: {processed_attack_config}")
@@ -94,7 +97,11 @@ def evaluate_config(
 
     examples_to_return = []
 
-    pbar = tqdm(dataloader, desc="Оценка атаки", leave=False, dynamic_ncols=True)
+    pbar_desc = "Оценка атаки"
+    if progress_info:
+        pbar_desc = f"{progress_info}"
+
+    pbar = tqdm(dataloader, desc=pbar_desc, leave=False, dynamic_ncols=True)
 
     for i, (images, labels) in enumerate(pbar):
         images, labels = images.to(device), labels.to(device)
@@ -154,7 +161,7 @@ def evaluate_config(
         "processed_config": processed_attack_config
     }
 
-    logger.info(f"Результаты оценки: ASR={results['attack_success_rate']:.4f}, "
+    logger.info(f"{progress_prefix}Результаты оценки: ASR={results['attack_success_rate']:.4f}, "
                 f"RobustAcc={results['robust_accuracy']:.4f}, "
                 f"Avg L2={results['avg_l2_norm']:.4f}")
 
