@@ -24,7 +24,7 @@ class RandomSampler:
 
         :param search_space_path: Путь к YAML-файлу с пространством поиска.
         """
-        with open(search_space_path, 'r') as f:
+        with open(search_space_path, 'r', encoding='utf-8') as f:
             self.space = yaml.safe_load(f)
 
     def sample(self, norm: str) -> Dict[str, Any]:

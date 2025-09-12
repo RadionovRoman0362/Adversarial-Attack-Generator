@@ -1,0 +1,23 @@
+search:
+  sampler: "optuna"
+  direction: "maximize"
+num_trials: 100
+num_eval_samples: 1000
+search_space_path: "configs/search_space.yaml"
+results_dir: "./results_imagenette" # <-- Новая папка для результатов
+
+epsilon: 0.03137 # 8/255 (остается тем же)
+steps: 20
+norm: "linf"
+
+model:
+  name: "resnet18_imagenet" # <-- Используем стандартный ResNet
+  num_classes: 10
+  checkpoint_path: "./checkpoints_imagenette/model_best.pth.tar" # <-- Путь к новой модели
+
+dataset:
+  name: "imagenette" # <-- Новый датасет
+  data_dir: "./data"
+  batch_size: 64 # <-- Уменьшенный батч
+  num_workers: 8
+  num_workers: 8

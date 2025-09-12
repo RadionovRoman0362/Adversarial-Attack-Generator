@@ -15,3 +15,17 @@ def resnet18_cifar(num_classes=10, pretrained=True):
     model.fc = nn.Linear(num_ftrs, num_classes)
 
     return model
+
+
+def resnet18_imagenet_arch(num_classes=10):
+    """
+    Создает стандартную архитектуру ResNet18 из torchvision,
+    но с измененным последним слоем под нужное количество классов.
+    Сохраняет оригинальный conv1 (7x7) и maxpool.
+    """
+    model = models.resnet18(weights=None)
+
+    num_ftrs = model.fc.in_features
+    model.fc = nn.Linear(num_ftrs, num_classes)
+
+    return model

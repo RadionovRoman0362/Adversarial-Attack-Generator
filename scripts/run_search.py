@@ -1,5 +1,3 @@
-# scripts/run_search.py
-
 """
 Главный скрипт для запуска поиска лучших состязательных атак.
 
@@ -20,7 +18,7 @@ import logging
 import os
 import sys
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, List
 import gc
 import optuna
 
@@ -39,6 +37,36 @@ from advgen.utils.data_loader import get_dataloader, DATASET_STATS
 from advgen.utils.logging_setup import setup_logging
 
 
+def find_best_trial(trials: List[optuna.Trial]) -> optuna.Trial:
+    """
+    Находит лучший trial по двум критериям:
+    1. Максимизация attack_success_rate.
+    2. При равенстве ASR, минимизация avg_l2_norm.
+    """
+    best_trial = None
+    best_asr = -1.0
+    best_l2 = float('inf')
+
+    for trial in trials:
+        # Пропускаем неудачные (crashed) прогоны
+        if "full_results" not in trial.user_attrs:
+            continue
+
+        results = trial.user_attrs["full_results"]
+        current_asr = results.get("attack_success_rate", -1.0)
+        current_l2 = results.get("avg_l2_norm", float('inf'))
+
+        if current_asr > best_asr:
+            best_asr = current_asr
+            best_l2 = current_l2
+            best_trial = trial
+        elif current_asr == best_asr and current_l2 < best_l2:
+            best_l2 = current_l2
+            best_trial = trial
+
+    return best_trial
+
+
 def get_model(config: Dict[str, Any]) -> nn.Module:
     """Фабричная функция для создания моделей на основе конфига."""
     model_name = config['name']
@@ -46,6 +74,8 @@ def get_model(config: Dict[str, Any]) -> nn.Module:
 
     if model_name == 'resnet18_cifar':
         return resnet_cifar.resnet18_cifar(num_classes=num_classes, pretrained=False)
+    elif model_name == 'resnet18_imagenet':
+        return resnet_cifar.resnet18_imagenet_arch(num_classes=num_classes)
     else:
         raise NotImplementedError(f"Модель '{model_name}' не поддерживается.")
 
@@ -56,7 +86,7 @@ def main(config_path: str):
     logger = logging.getLogger(__name__)
 
     logger.info(f"Загрузка конфигурации эксперимента из: {config_path}")
-    with open(config_path, 'r') as f:
+    with open(config_path, 'r', encoding='utf-8') as f:
         exp_config = yaml.safe_load(f)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -109,8 +139,11 @@ def main(config_path: str):
         study = optuna.create_study(direction=search_config.get('direction', 'maximize'))
         study.optimize(objective, n_trials=num_trials)
 
-        best_trial = study.best_trial
-        best_config_info = best_trial.user_attrs.get("full_results", {})
+        logger.info("Анализ всех прогонов для выбора лучшего по двум критериям (ASR, L2)...")
+        best_trial = find_best_trial(study.trials)
+
+        if best_trial:
+            best_config_info = best_trial.user_attrs.get("full_results", {})
         all_trials_results = [t.user_attrs.get("full_results") for t in study.trials if "full_results" in t.user_attrs]
 
     elif sampler_type == 'random':
@@ -127,11 +160,25 @@ def main(config_path: str):
             all_trials_results.append(results)
 
             current_asr = results.get("attack_success_rate", -1.0)
-            if current_asr > best_config_info["attack_success_rate"]:
+
+            best_asr = best_config_info.get("attack_success_rate", -1.0)
+            best_l2 = best_config_info.get("avg_l2_norm", float('inf'))
+            current_l2 = results.get("avg_l2_norm", float('inf'))
+
+            is_new_best = False
+            update_reason = ""
+            if current_asr > best_asr:
+                is_new_best = True
+                update_reason = f"ASR улучшен ({best_asr:.4f} -> {current_asr:.4f})"
+            elif current_asr == best_asr and current_l2 < best_l2:
+                is_new_best = True
+                update_reason = f"ASR тот же, но L2 норма меньше ({best_l2:.4f} -> {current_l2:.4f})"
+
+            if is_new_best:
                 best_config_info = results
                 logger.info(
                     f"*** Найдена новая лучшая конфигурация! "
-                    f"ASR: {current_asr:.4f} ***"
+                    f"Причина: {update_reason} ***"
                 )
     else:
         raise ValueError(f"Неизвестный тип сэмплера: '{sampler_type}'. Доступны: 'random', 'optuna'.")

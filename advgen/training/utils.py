@@ -49,13 +49,8 @@ def load_checkpoint(
 ) -> Dict[str, Any]:
     """
     Загружает чекпоинт модели из файла.
-
-    :param path: Путь к файлу чекпоинта (.pth.tar).
-    :param model: Экземпляр модели, в которую будут загружены веса.
-    :param optimizer: (Опционально) Экземпляр оптимизатора для загрузки состояния.
-    :param scheduler: (Опционально) Экземпляр планировщика для загрузки состояния.
-    :return: Словарь с информацией из чекпоинта (например, номер эпохи, лучшая точность).
-    :raises FileNotFoundError: Если файл чекпоинта не найден.
+    Эта функция универсальна и может загружать как полные чекпоинты (словари),
+    так и файлы, содержащие только state_dict модели.
     """
     if not os.path.isfile(path):
         raise FileNotFoundError(f"Файл чекпоинта не найден по пути: {path}")
@@ -63,22 +58,32 @@ def load_checkpoint(
     device = next(model.parameters()).device
     checkpoint = torch.load(path, map_location=device)
 
-    model.load_state_dict(checkpoint['state_dict'])
+    state_dict_to_load = None
+    if isinstance(checkpoint, dict) and 'state_dict' in checkpoint:
+        logger.info("Обнаружен полный чекпоинт. Загрузка из ключа 'state_dict'.")
+        state_dict_to_load = checkpoint['state_dict']
+    elif isinstance(checkpoint, dict):
+        logger.info("Обнаружен state_dict. Загрузка напрямую.")
+        state_dict_to_load = checkpoint
+    else:
+        raise TypeError(f"Неподдерживаемый формат чекпоинта. Ожидался dict, получен {type(checkpoint)}")
 
-    if optimizer and 'optimizer' in checkpoint:
+    model.load_state_dict(state_dict_to_load)
+
+    if optimizer and isinstance(checkpoint, dict) and 'optimizer' in checkpoint:
         optimizer.load_state_dict(checkpoint['optimizer'])
         logger.info("Состояние оптимизатора успешно загружено.")
 
-    if scheduler and 'scheduler' in checkpoint:
+    if scheduler and isinstance(checkpoint, dict) and 'scheduler' in checkpoint:
         scheduler.load_state_dict(checkpoint['scheduler'])
         logger.info("Состояние планировщика успешно загружено.")
 
-    start_epoch = checkpoint.get('epoch', 0)
-    best_acc = checkpoint.get('best_acc', 0.0)
+    start_epoch = checkpoint.get('epoch', 0) if isinstance(checkpoint, dict) else 0
+    best_acc = checkpoint.get('best_acc', 0.0) if isinstance(checkpoint, dict) else 0.0
 
-    logger.info(f"Чекпоинт успешно загружен из '{path}'.\n"
-                f"  - Эпоха: {start_epoch}\n"
-                f"  - Лучшая точность: {best_acc:.4f}")
+    logger.info(f"Чекпоинт успешно загружен из '{path}'.")
+    if start_epoch > 0:
+         logger.info(f"  - Эпоха: {start_epoch}, Лучшая точность: {best_acc:.4f}")
 
     return {
         'model': model,

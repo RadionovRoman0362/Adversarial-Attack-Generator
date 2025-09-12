@@ -26,25 +26,36 @@ DATASET_STATS = {
     'imagenet': {
         'mean': [0.485, 0.456, 0.406],
         'std': [0.229, 0.224, 0.225],
+    },
+    'imagenette': {
+        'mean': [0.485, 0.456, 0.406],
+        'std': [0.229, 0.224, 0.225],
     }
 }
 
 
-def _get_transform(dataset_name: str) -> transforms.Compose:
+def _get_transform(dataset_name: str, train: bool  = False) -> transforms.Compose:
     """Возвращает соответствующий transform для датасета."""
     if dataset_name in ['cifar10', 'cifar100']:
         return transforms.Compose([transforms.ToTensor()])
-    elif dataset_name == 'imagenet':
-        return transforms.Compose([
-            transforms.Resize(256),
-            transforms.CenterCrop(224),
-            transforms.ToTensor(),
-        ])
+    elif dataset_name in ['imagenet', 'imagenette']:
+        if train:
+            return transforms.Compose([
+                transforms.RandomResizedCrop(224),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+            ])
+        else:
+            return transforms.Compose([
+                transforms.Resize(256),
+                transforms.CenterCrop(224),
+                transforms.ToTensor(),
+            ])
     else:
         return transforms.Compose([transforms.ToTensor()])
 
 
-def _get_dataset(dataset_name: str, data_dir: str, transform: transforms.Compose) -> Dataset:
+def _get_dataset(dataset_name: str, data_dir: str, transform: transforms.Compose, train: bool = False) -> Dataset:
     """Создает и возвращает экземпляр тестового датасета."""
     if dataset_name == 'cifar10':
         return torchvision.datasets.CIFAR10(
@@ -54,14 +65,12 @@ def _get_dataset(dataset_name: str, data_dir: str, transform: transforms.Compose
         return torchvision.datasets.CIFAR100(
             root=data_dir, train=False, download=True, transform=transform
         )
-    elif dataset_name == 'imagenet':
-        val_dir = os.path.join(data_dir, "imagenet", "val")
-        if not os.path.isdir(val_dir):
-            raise FileNotFoundError(
-                f"Директория валидации ImageNet не найдена по пути: {val_dir}. "
-                "Убедитесь, что датасет загружен и имеет структуру data/imagenet/val/{class}/{image.JPEG}"
-            )
-        return torchvision.datasets.ImageFolder(root=val_dir, transform=transform)
+    elif dataset_name in ['imagenet', 'imagenette']:
+        split = 'train' if train else 'val'
+        dataset_dir = os.path.join(data_dir, "imagenette2", split)  # <-- Путь к ImageNette
+        if not os.path.isdir(dataset_dir):
+            raise FileNotFoundError(f"Директория '{split}' для ImageNette не найдена: {dataset_dir}")
+        return torchvision.datasets.ImageFolder(root=dataset_dir, transform=transform)
     else:
         raise NotImplementedError(f"Логика загрузки для датасета '{dataset_name}' не реализована.")
 
@@ -73,7 +82,8 @@ def get_dataloader(
         num_samples: Optional[int] = 1000,
         shuffle: bool = False,
         num_workers: int = 4,
-        pin_memory: bool = True
+        pin_memory: bool = True,
+        train: bool = False
 ) -> Tuple[DataLoader, Dict[str, Any]]:
     """
     Создает и возвращает DataLoader для указанного датасета.
@@ -85,6 +95,7 @@ def get_dataloader(
     :param shuffle: Перемешивать ли данные. Для тестов обычно False.
     :param num_workers: Количество потоков для загрузки данных.
     :param pin_memory: Использовать ли pin_memory для ускорения передачи на GPU.
+    :param train: Загружаем train или test.
     :return: Кортеж, содержащий: DataLoader и словарь со статистикой датасета (mean, std).
     """
     dataset_name = dataset_name.lower()
@@ -92,10 +103,10 @@ def get_dataloader(
         raise ValueError(f"Неизвестное имя датасета: {dataset_name}. Поддерживаются: {list(DATASET_STATS.keys())}")
 
     stats = DATASET_STATS[dataset_name]
-    transform = _get_transform(dataset_name)
+    transform = _get_transform(dataset_name, train)
 
     logger.info(f"Загрузка тестового сета для '{dataset_name}'...")
-    full_testset = _get_dataset(dataset_name, data_dir, transform)
+    full_testset = _get_dataset(dataset_name, data_dir, transform, train)
 
     if num_samples is not None:
         if num_samples > len(full_testset):

@@ -14,6 +14,7 @@ from typing import Dict, Any, Optional
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torchvision.models as models
 import yaml
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -33,6 +34,12 @@ def get_model(config: Dict[str, Any]) -> nn.Module:
 
     if model_name == 'resnet18_cifar':
         return resnet_cifar.resnet18_cifar(num_classes=num_classes, pretrained=pretrained)
+    elif model_name == 'resnet18_imagenet':
+        weights = models.ResNet18_Weights.IMAGENET1K_V1 if pretrained else None
+        model = models.resnet18(weights=weights)
+        num_ftrs = model.fc.in_features
+        model.fc = nn.Linear(num_ftrs, num_classes)
+        return model
     else:
         raise NotImplementedError(f"Модель '{model_name}' не поддерживается.")
 
@@ -78,7 +85,7 @@ def main(config_path: str, resume_path: Optional[str] = None):
     logger = logging.getLogger(__name__)
 
     logger.info(f"Загрузка конфигурации из: {config_path}")
-    with open(config_path, 'r') as f:
+    with open(config_path, 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
 
     device = torch.device(config.get('device', 'cuda' if torch.cuda.is_available() else 'cpu'))

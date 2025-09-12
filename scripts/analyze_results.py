@@ -248,7 +248,14 @@ def main(results_path: str):
             visual_examples[i][f"adv_image_{name}"] = adv_images_batch[i].cpu()
             visual_examples[i][f"adv_pred_{name}"] = adv_preds[i].cpu().item()
 
-    class_names = ['airplane', 'automobile', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck']
+    if exp_config['dataset']['name'] == 'imagenette':
+        class_names = [
+            'tench', 'English springer', 'cassette player', 'chain saw',
+            'church', 'French horn', 'garbage truck', 'gas pump',
+            'golf ball', 'parachute'
+        ]
+    else:  # По умолчанию CIFAR-10
+        class_names = ['airplane', 'automobile', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck']
     plot_attack_examples(
         visual_examples[:num_examples_to_plot],
         list(attacks_to_compare.keys()),
