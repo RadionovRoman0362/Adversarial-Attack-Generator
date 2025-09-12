@@ -19,29 +19,11 @@ import yaml
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from advgen.models import resnet_cifar
+from advgen.models import get_model
 from advgen.training.trainer import Trainer
 from advgen.training.utils import load_checkpoint
 from advgen.utils.data_loader import get_dataloader
 from advgen.utils.logging_setup import setup_logging
-
-
-def get_model(config: Dict[str, Any]) -> nn.Module:
-    """Фабричная функция для создания моделей."""
-    model_name = config['model_name']
-    num_classes = config.get('num_classes', 10)
-    pretrained = config.get('pretrained', True)
-
-    if model_name == 'resnet18_cifar':
-        return resnet_cifar.resnet18_cifar(num_classes=num_classes, pretrained=pretrained)
-    elif model_name == 'resnet18_imagenet':
-        weights = models.ResNet18_Weights.IMAGENET1K_V1 if pretrained else None
-        model = models.resnet18(weights=weights)
-        num_ftrs = model.fc.in_features
-        model.fc = nn.Linear(num_ftrs, num_classes)
-        return model
-    else:
-        raise NotImplementedError(f"Модель '{model_name}' не поддерживается.")
 
 
 def get_optimizer(model: nn.Module, config: Dict[str, Any]) -> optim.Optimizer:

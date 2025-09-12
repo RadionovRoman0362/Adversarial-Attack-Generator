@@ -28,7 +28,7 @@ import yaml
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from advgen.models import resnet_cifar
+from advgen.models import get_model
 from advgen.training.utils import load_checkpoint
 from advgen.core.model_wrapper import ModelWrapper
 from advgen.search.samplers import RandomSampler, OptunaSampler
@@ -104,19 +104,6 @@ def find_best_trial(trials: List[optuna.Trial]) -> optuna.Trial:
             best_trial = trial
 
     return best_trial
-
-
-def get_model(config: Dict[str, Any]) -> nn.Module:
-    """Фабричная функция для создания моделей на основе конфига."""
-    model_name = config['name']
-    num_classes = config.get('num_classes', 10)
-
-    if model_name == 'resnet18_cifar':
-        return resnet_cifar.resnet18_cifar(num_classes=num_classes, pretrained=False)
-    elif model_name == 'resnet18_imagenet':
-        return resnet_cifar.resnet18_imagenet_arch(num_classes=num_classes)
-    else:
-        raise NotImplementedError(f"Модель '{model_name}' не поддерживается.")
 
 
 def main(config_path: str):
