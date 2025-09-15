@@ -9,7 +9,7 @@ def get_model(config: Dict[str, Any]) -> nn.Module:
     """
     Центральная фабричная функция для создания моделей.
     """
-    model_name = config['name']
+    model_name = config['model_name']
     num_classes = config.get('num_classes', 10)
     pretrained = config.get('pretrained', False)
 

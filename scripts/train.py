@@ -24,6 +24,7 @@ from advgen.training.trainer import Trainer
 from advgen.training.utils import load_checkpoint
 from advgen.utils.data_loader import get_dataloader
 from advgen.utils.logging_setup import setup_logging
+from advgen.core.attack_runner import AttackRunner
 
 
 def get_optimizer(model: nn.Module, config: Dict[str, Any]) -> optim.Optimizer:
@@ -74,13 +75,14 @@ def main(config_path: str, resume_path: Optional[str] = None):
     logger.info(f"Используемое устройство: {device}")
 
     logger.info("Подготовка загрузчиков данных...")
-    train_loader, _ = get_dataloader(
+    train_loader, stats = get_dataloader(
         dataset_name=config['dataset_name'],
         data_dir=config['data_dir'],
         batch_size=config['batch_size'],
         num_samples=None,
         shuffle=True,
-        num_workers=config.get('num_workers', 4)
+        num_workers=config.get('num_workers', 4),
+        train=True
     )
     val_loader, _ = get_dataloader(
         dataset_name=config['dataset_name'],
@@ -88,8 +90,16 @@ def main(config_path: str, resume_path: Optional[str] = None):
         batch_size=config['batch_size'],
         num_samples=None,
         shuffle=False,
-        num_workers=config.get('num_workers', 4)
+        num_workers=config.get('num_workers', 4),
+        train=False
     )
+
+    attack_runner = None
+    adv_train_config = config.get('adversarial_training')
+    if adv_train_config and adv_train_config.get('enabled'):
+        logger.info("Активировано состязательное обучение. Создание AttackRunner...")
+        attack_config = adv_train_config['attack_config']
+        attack_runner = AttackRunner(attack_config)
 
     logger.info(f"Создание модели: {config['model_name']}")
     model = get_model(config).to(device)
@@ -123,7 +133,9 @@ def main(config_path: str, resume_path: Optional[str] = None):
         scheduler=scheduler,
         criterion=criterion,
         device=device,
-        checkpoint_dir=config['checkpoint_dir']
+        checkpoint_dir=config['checkpoint_dir'],
+        attack_runner=attack_runner,
+        dataset_stats=stats
     )
     trainer.best_acc = best_acc
 

@@ -1,8 +1,8 @@
 search:
   sampler: "optuna"
   direction: "maximize"
-num_trials: 50
-num_eval_samples: 500
+num_trials: 100
+num_eval_samples: 1000
 search_space_path: "configs/search_space.yaml"
 results_dir: "./results_imagenette" # <-- Новая папка для результатов
 
@@ -11,7 +11,7 @@ steps: 20
 norm: "linf"
 
 model:
-  name: "resnet18_imagenet" # <-- Используем стандартный ResNet
+  model_name: "resnet18_imagenet" # <-- Используем стандартный ResNet
   num_classes: 10
   checkpoint_path: "./checkpoints_imagenette/model_best.pth.tar" # <-- Путь к новой модели
 

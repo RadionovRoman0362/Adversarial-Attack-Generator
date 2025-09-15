@@ -14,7 +14,7 @@ norm: "linf" # Указываем, какую норму будем исслед
 
 # --- Модель для Атаки ---
 model:
-  name: "resnet18_imagenet_arch"
+  model_name: "resnet18_imagenet_arch"
   num_classes: 10
   # Путь к ЛУЧШЕМУ сохраненному чекпоинту после обучения
   checkpoint_path: "./checkpoints/resnet18_cifar10_clean.pth"

@@ -18,7 +18,7 @@ norm: "linf" # Указываем, какую норму будем исслед
 
 # --- Модель для Атаки ---
 model:
-  name: "resnet18_imagenet"
+  model_name: "resnet18_imagenet"
   num_classes: 10
   # Путь к ЛУЧШЕМУ сохраненному чекпоинту после обучения
   checkpoint_path: "./checkpoints_imagenette/model_best.pth.tar"

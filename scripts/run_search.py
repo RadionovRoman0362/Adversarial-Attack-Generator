@@ -122,7 +122,7 @@ def main(config_path: str):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Используемое устройство: {device}")
 
-    logger.info(f"Создание модели: {exp_config['model']['name']}")
+    logger.info(f"Создание модели: {exp_config['model']['model_name']}")
     model = get_model(exp_config['model']).to(device)
 
     logger.info(f"Загрузка весов из: {exp_config['model']['checkpoint_path']}")

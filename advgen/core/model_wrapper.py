@@ -64,10 +64,6 @@ class ModelWrapper(nn.Module):
         self.device = _validate_and_get_device(model, mean, std)
 
         self.model = model.to(self.device)
-        self.model.eval()
-
-        for param in self.model.parameters():
-            param.requires_grad = False
 
         self.use_normalization = mean is not None
         if self.use_normalization:
@@ -106,14 +102,14 @@ class ModelWrapper(nn.Module):
         return self.forward(x)
 
     def train(self, mode: bool = True):
-        """
-        Переопределенный метод. ModelWrapper всегда остается в режиме eval.
-        """
-        if mode:
-            logger.warning("ModelWrapper предназначен только для инференса. "
-                           "Вызов .train() не изменит режим внутренней модели на 'train'.")
-        self.model.eval()
+        """Переключает обертку и внутреннюю модель в режим обучения."""
+        super().train(mode)
+        self.model.train(mode)
         return self
+
+    def eval(self):
+        """Переключает обертку и внутреннюю модель в режим оценки."""
+        return self.train(False)
 
     def __repr__(self) -> str:
         """Представление объекта для вывода и отладки."""

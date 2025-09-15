@@ -72,7 +72,8 @@ class AttackRunner:
             self,
             model_wrapper: ModelWrapper,
             images: torch.Tensor,
-            labels: torch.Tensor
+            labels: torch.Tensor,
+            keep_graph: bool = False
     ) -> torch.Tensor:
         """
         Выполняет полный цикл состязательной атаки.
@@ -80,6 +81,7 @@ class AttackRunner:
         :param model_wrapper: Обертка над атакуемой моделью.
         :param images: Батч оригинальных изображений (тензор в [0, 1]).
         :param labels: Истинные метки для изображений.
+        :param keep_graph: Сохранять граф для состязательного обучения.
         :return: Батч состязательных изображений.
         """
         original_images = images.clone().detach()
@@ -115,7 +117,7 @@ class AttackRunner:
                 epsilon=self.epsilon
             )
 
-        return adv_images.detach()
+        return adv_images if keep_graph else adv_images.detach()
 
     def __repr__(self) -> str:
         """Представление объекта для вывода и отладки."""

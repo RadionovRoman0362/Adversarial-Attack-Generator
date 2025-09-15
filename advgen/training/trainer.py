@@ -5,7 +5,7 @@
 
 import logging
 import os
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 import torch
 import torch.nn as nn
@@ -14,6 +14,8 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from .utils import save_checkpoint
+from ..core.attack_runner import AttackRunner
+from ..core.model_wrapper import ModelWrapper
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +34,9 @@ class Trainer:
             scheduler: optim.lr_scheduler._LRScheduler,
             criterion: nn.Module,
             device: torch.device,
-            checkpoint_dir: str
+            checkpoint_dir: str,
+            attack_runner: Optional[AttackRunner] = None,
+            dataset_stats: Optional[Dict[str, list]] = None
     ):
         """
         :param model: Модель PyTorch для обучения.
@@ -43,6 +47,8 @@ class Trainer:
         :param criterion: Функция потерь (например, CrossEntropyLoss).
         :param device: Устройство для вычислений ('cpu' или 'cuda').
         :param checkpoint_dir: Директория для сохранения чекпоинтов.
+        :param attack_runner: Экземпляр AttackRunner для состязательного обучения.
+        :param dataset_stats: Статистика для нормализации.
         """
         self.model = model.to(device)
         self.train_loader = train_loader
@@ -52,6 +58,10 @@ class Trainer:
         self.criterion = criterion
         self.device = device
         self.checkpoint_dir = checkpoint_dir
+        self.attack_runner = attack_runner
+        self.dataset_stats = dataset_stats
+        if self.attack_runner:
+            logger.info("Тренер запущен в режиме состязательного обучения.")
 
         self.best_acc = 0.0
         os.makedirs(self.checkpoint_dir, exist_ok=True)
@@ -106,7 +116,23 @@ class Trainer:
         for inputs, labels in pbar:
             inputs, labels = inputs.to(self.device), labels.to(self.device)
 
-            outputs = self.model(inputs)
+            if self.attack_runner:
+                train_model_wrapper = ModelWrapper(
+                    self.model,
+                    mean=self.dataset_stats['mean'],
+                    std=self.dataset_stats['std']
+                )
+
+                adv_inputs = self.attack_runner.attack(
+                    train_model_wrapper,
+                    inputs,
+                    labels,
+                    keep_graph=True
+                )
+                outputs = self.model(adv_inputs)
+            else:
+                outputs = self.model(inputs)
+
             loss = self.criterion(outputs, labels)
 
             self.optimizer.zero_grad()

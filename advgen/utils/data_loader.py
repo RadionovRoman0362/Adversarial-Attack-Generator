@@ -67,7 +67,7 @@ def _get_dataset(dataset_name: str, data_dir: str, transform: transforms.Compose
         )
     elif dataset_name in ['imagenet', 'imagenette']:
         split = 'train' if train else 'val'
-        dataset_dir = os.path.join(data_dir, "imagenette2", split)  # <-- Путь к ImageNette
+        dataset_dir = os.path.join(data_dir, "imagenette2", split)
         if not os.path.isdir(dataset_dir):
             raise FileNotFoundError(f"Директория '{split}' для ImageNette не найдена: {dataset_dir}")
         return torchvision.datasets.ImageFolder(root=dataset_dir, transform=transform)
@@ -105,7 +105,10 @@ def get_dataloader(
     stats = DATASET_STATS[dataset_name]
     transform = _get_transform(dataset_name, train)
 
-    logger.info(f"Загрузка тестового сета для '{dataset_name}'...")
+    if train:
+        logger.info(f"Загрузка тестового сета для '{dataset_name}'...")
+    else:
+        logger.info(f"Загрузка валидационного сета для '{dataset_name}'...")
     full_testset = _get_dataset(dataset_name, data_dir, transform, train)
 
     if num_samples is not None:
@@ -122,7 +125,10 @@ def get_dataloader(
         logger.info(f"Используется подвыборка из {len(dataset_to_load)} случайных примеров.")
     else:
         dataset_to_load = full_testset
-        logger.info(f"Используется полный тестовый датасет из {len(dataset_to_load)} примеров.")
+        if train:
+            logger.info(f"Используется полный тестовый датасет из {len(dataset_to_load)} примеров.")
+        else:
+            logger.info(f"Используется полный валидационный датасет из {len(dataset_to_load)} примеров.")
 
     dataloader = DataLoader(
         dataset_to_load,
