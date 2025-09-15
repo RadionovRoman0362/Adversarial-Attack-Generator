@@ -25,6 +25,23 @@ from advgen.training.utils import load_checkpoint
 from advgen.utils.data_loader import get_dataloader
 from advgen.utils.logging_setup import setup_logging
 from advgen.core.attack_runner import AttackRunner
+from advgen.training.training_losses import TRADESLoss
+
+
+def get_criterion(config: Dict[str, Any]) -> nn.Module:
+    """Фабричная функция для создания функции потерь."""
+    criterion_config = config.get('criterion', {'name': 'cross_entropy'})
+    name = criterion_config['name']
+    params = criterion_config.get('params', {})
+
+    if name == 'cross_entropy':
+        return nn.CrossEntropyLoss()
+    elif name == 'trades':
+        logger = logging.getLogger(__name__)
+        logger.info(f"Используется TRADESLoss с параметрами: {params}")
+        return TRADESLoss(**params)
+    else:
+        raise NotImplementedError(f"Функция потерь '{name}' не поддерживается.")
 
 
 def get_optimizer(model: nn.Module, config: Dict[str, Any]) -> optim.Optimizer:
@@ -110,7 +127,7 @@ def main(config_path: str, resume_path: Optional[str] = None):
     logger.info(f"Создание планировщика: {config['scheduler']['name']}")
     scheduler = get_scheduler(optimizer, config)
 
-    criterion = nn.CrossEntropyLoss()
+    criterion = get_criterion(config)
 
     if resume_path:
         logger.info(f"Возобновление обучения с чекпоинта: {resume_path}")

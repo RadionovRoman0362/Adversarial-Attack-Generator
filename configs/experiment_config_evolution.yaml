@@ -6,7 +6,7 @@ search:
     mutation_rate: 0.1
     tournament_size: 3
 
-num_trials: 50         # Сколько случайных конфигураций протестировать
+num_trials: 25         # Сколько случайных конфигураций протестировать
 num_eval_samples: 500  # На скольких примерах оценивать каждую конфигурацию
 search_space_path: "configs/search_space.yaml"
 results_dir: "./results_evolutionary" # Директория для сохранения результатов
@@ -21,7 +21,7 @@ model:
   model_name: "resnet18_imagenet"
   num_classes: 10
   # Путь к ЛУЧШЕМУ сохраненному чекпоинту после обучения
-  checkpoint_path: "./checkpoints_imagenette/model_best.pth.tar"
+  checkpoint_path: "./checkpoints_imagenette_pgd7/model_best.pth.tar"
 
 # --- Датасет для Атаки ---
 dataset:

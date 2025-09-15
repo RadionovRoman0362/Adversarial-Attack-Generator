@@ -16,6 +16,7 @@ from tqdm import tqdm
 from .utils import save_checkpoint
 from ..core.attack_runner import AttackRunner
 from ..core.model_wrapper import ModelWrapper
+from .training_losses import TRADESLoss
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,10 @@ class Trainer:
         if self.attack_runner:
             logger.info("Тренер запущен в режиме состязательного обучения.")
 
+        self.is_trades = isinstance(self.criterion, TRADESLoss)
+        if self.is_trades:
+            logger.info("Тренер использует функцию потерь TRADES.")
+
         self.train_model_wrapper = ModelWrapper(
             self.model,
             mean=self.dataset_stats['mean'],
@@ -75,6 +80,7 @@ class Trainer:
             mean=self.dataset_stats['mean'],
             std=self.dataset_stats['std']
         )
+        self.validation_criterion = nn.CrossEntropyLoss()
 
         self.best_acc = 0.0
         os.makedirs(self.checkpoint_dir, exist_ok=True)
@@ -145,10 +151,15 @@ class Trainer:
         total_loss = 0.0
         correct_predictions = 0
         total_samples = 0
+        outputs_clean = None
+        outputs_adv = None
 
         pbar = tqdm(self.train_loader, desc=f"Эпоха {epoch_num} (Train)", dynamic_ncols=True)
         for inputs, labels in pbar:
             inputs, labels = inputs.to(self.device), labels.to(self.device)
+
+            if not self.attack_runner or self.is_trades:
+                outputs_clean = self.train_model_wrapper(inputs)
 
             if self.attack_runner:
                 adv_inputs = self.attack_runner.attack(
@@ -157,18 +168,24 @@ class Trainer:
                     labels,
                     keep_graph=True
                 )
-                outputs = self.train_model_wrapper(adv_inputs)
-            else:
-                outputs = self.train_model_wrapper(inputs)
+                outputs_adv = self.train_model_wrapper(adv_inputs)
 
-            loss = self.criterion(outputs, labels)
+            if self.is_trades:
+                loss = self.criterion(outputs_clean, outputs_adv, labels)
+                outputs_for_acc = outputs_adv
+            elif self.attack_runner:
+                loss = self.criterion(outputs_adv, labels)
+                outputs_for_acc = outputs_adv
+            else:
+                loss = self.criterion(outputs_clean, labels)
+                outputs_for_acc = outputs_clean
 
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
 
             total_loss += loss.item() * inputs.size(0)
-            _, predicted = torch.max(outputs.data, 1)
+            _, predicted = torch.max(outputs_for_acc.data, 1)
             correct_predictions += (predicted == labels).sum().item()
             total_samples += labels.size(0)
 
@@ -193,7 +210,7 @@ class Trainer:
                 inputs, labels = inputs.to(self.device), labels.to(self.device)
 
                 outputs = self.val_model_wrapper(inputs)
-                loss = self.criterion(outputs, labels)
+                loss = self.validation_criterion(outputs, labels)
 
                 total_loss += loss.item() * inputs.size(0)
                 _, predicted = torch.max(outputs.data, 1)
@@ -223,7 +240,7 @@ class Trainer:
 
                 with torch.no_grad():
                     outputs = self.val_model_wrapper(adv_inputs)
-                    loss = self.criterion(outputs, labels)
+                    loss = self.validation_criterion(outputs, labels)
 
                 total_loss_adv += loss.item() * inputs.size(0)
                 _, predicted = torch.max(outputs.data, 1)
