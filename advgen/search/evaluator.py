@@ -8,7 +8,7 @@
 
 import copy
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 import torch
 from torch.utils.data import DataLoader
@@ -49,7 +49,7 @@ def _preprocess_config(config: Dict[str, Any]) -> Dict[str, Any]:
 
 def evaluate_config(
         attack_config: Dict[str, Any],
-        model_wrapper: ModelWrapper,
+        model_wrappers: List[ModelWrapper],
         dataloader: DataLoader,
         device: torch.device,
         num_examples_to_return: int = 0,
@@ -67,13 +67,19 @@ def evaluate_config(
        (ASR, Robust Accuracy, средние нормы).
 
     :param attack_config: Словарь с конфигурацией атаки, готовый для AttackRunner.
-    :param model_wrapper: Обертка над атакуемой моделью.
+    :param model_wrappers: Обертки над атакуемыми моделями.
     :param dataloader: DataLoader с тестовыми данными.
     :param device: Устройство, на котором будут производиться вычисления ('cpu' или 'cuda').
     :param num_examples_to_return: Количество изображений, которое надо сохранить.
     :param progress_info: Номер текущего индивида для эволюционного алгоритма.
     :return: Словарь с итоговыми метриками по всему датасету.
     """
+    if not model_wrappers:
+        raise ValueError("Список model_wrappers не может быть пустым.")
+
+    surrogate_model = model_wrappers[0]
+    num_models = len(model_wrappers)
+
     processed_attack_config = _preprocess_config(attack_config)
 
     try:
@@ -107,38 +113,38 @@ def evaluate_config(
         images, labels = images.to(device), labels.to(device)
 
         with autocast('cuda', dtype=torch.float16):
-            adv_images = attack_runner.attack(model_wrapper, images, labels)
-
+            adv_images = attack_runner.attack(surrogate_model, images, labels)
         adv_images = adv_images.float()
 
-        (
-            init_correct,
-            success_count,
-            batch_linf,
-            batch_l2,
-            batch_l1
-        ) = calculate_attack_metrics(model_wrapper, adv_images, images, labels)
+        for model_wrapper in model_wrappers:
+            (
+                init_correct,
+                success_count,
+                batch_linf,
+                batch_l2,
+                batch_l1
+            ) = calculate_attack_metrics(model_wrapper, adv_images, images, labels)
 
-        total_initially_correct += init_correct
-        total_successful_attacks += success_count
-        cumulative_linf += batch_linf
-        cumulative_l2 += batch_l2
-        cumulative_l1 += batch_l1
+            total_initially_correct += init_correct
+            total_successful_attacks += success_count
+            cumulative_linf += batch_linf
+            cumulative_l2 += batch_l2
+            cumulative_l1 += batch_l1
 
-        if i == 0 and num_examples_to_return > 0:
-            clean_logits = model_wrapper(images)
-            clean_preds = torch.argmax(clean_logits, dim=1)
-            adv_logits = model_wrapper(adv_images)
-            adv_preds = torch.argmax(adv_logits, dim=1)
+            if i == 0 and num_examples_to_return > 0:
+                clean_logits = model_wrapper(images)
+                clean_preds = torch.argmax(clean_logits, dim=1)
+                adv_logits = model_wrapper(adv_images)
+                adv_preds = torch.argmax(adv_logits, dim=1)
 
-            for j in range(min(num_examples_to_return, len(images))):
-                examples_to_return.append({
-                    "original_image": images[j].cpu(),
-                    "adv_image": adv_images[j].cpu(),
-                    "label": labels[j].cpu().item(),
-                    "clean_pred": clean_preds[j].cpu().item(),
-                    "adv_pred": adv_preds[j].cpu().item()
-                })
+                for j in range(min(num_examples_to_return, len(images))):
+                    examples_to_return.append({
+                        "original_image": images[j].cpu(),
+                        "adv_image": adv_images[j].cpu(),
+                        "label": labels[j].cpu().item(),
+                        "clean_pred": clean_preds[j].cpu().item(),
+                        "adv_pred": adv_preds[j].cpu().item()
+                    })
 
         current_asr = get_attack_success_rate(total_successful_attacks, total_initially_correct)
         pbar.set_postfix(CurrentASR=f"{current_asr:.3f}")
@@ -161,7 +167,8 @@ def evaluate_config(
         "processed_config": processed_attack_config
     }
 
-    logger.info(f"{progress_prefix}Результаты оценки: ASR={results['attack_success_rate']:.4f}, "
+    logger.info(f"{progress_prefix}Результаты оценки (по {num_models} моделям): "
+                f"Avg ASR={results['attack_success_rate']:.4f}, "
                 f"RobustAcc={results['robust_accuracy']:.4f}, "
                 f"Avg L2={results['avg_l2_norm']:.4f}")
 

@@ -122,17 +122,30 @@ def main(config_path: str):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Используемое устройство: {device}")
 
-    logger.info(f"Создание модели: {exp_config['model']['model_name']}")
-    model = get_model(exp_config['model']).to(device)
-
-    logger.info(f"Загрузка весов из: {exp_config['model']['checkpoint_path']}")
-    checkpoint_data = load_checkpoint(exp_config['model']['checkpoint_path'], model)
-    model = checkpoint_data['model']
-
+    logger.info("Создание и загрузка моделей для атаки...")
+    model_wrappers = []
     dataset_name = exp_config['dataset']['name']
     stats = DATASET_STATS[dataset_name]
-    model_wrapper = ModelWrapper(model, mean=stats['mean'], std=stats['std'])
-    model_wrapper.eval()
+
+    model_configs = []
+    if 'models' in exp_config:
+        logger.info(f"Обнаружено {len(exp_config['models'])} моделей в конфигурации.")
+        model_configs.extend(exp_config['models'])
+    elif 'model' in exp_config:
+        logger.info("Обнаружена одна модель в конфигурации.")
+        model_configs.append(exp_config['model'])
+    else:
+        raise ValueError("В конфигурации эксперимента не найдены ключи 'model' или 'models'.")
+
+    for model_config in model_configs:
+        logger.info(f"  - Загрузка модели из: {model_config['checkpoint_path']}")
+        model = get_model(model_config).to(device)
+        model = load_checkpoint(model_config['checkpoint_path'], model)['model']
+        model_wrapper = ModelWrapper(model, mean=stats['mean'], std=stats['std'])
+        model_wrapper.eval()
+        model_wrappers.append(model_wrapper)
+
+    logger.info(f"Всего загружено {len(model_wrappers)} моделей для оценки атак.")
 
     logger.info("Подготовка загрузчика данных для оценки...")
 
@@ -169,7 +182,7 @@ def main(config_path: str):
             attack_config['epsilon'] = exp_config['epsilon']
             attack_config['steps'] = exp_config['steps']
 
-            results, _ = evaluate_config(attack_config, model_wrapper, dataloader, device)
+            results, _ = evaluate_config(attack_config, model_wrappers, dataloader, device)
             trial.set_user_attr("full_results", results)
 
             asr = results.get("attack_success_rate", -1.0)
@@ -200,7 +213,7 @@ def main(config_path: str):
             attack_config['epsilon'] = exp_config['epsilon']
             attack_config['steps'] = exp_config['steps']
 
-            results = evaluate_config(attack_config, model_wrapper, dataloader, device)
+            results = evaluate_config(attack_config, model_wrappers, dataloader, device)
             all_trials_results.append(results)
 
             current_asr = results.get("attack_success_rate", -1.0)
@@ -283,7 +296,7 @@ def main(config_path: str):
                 progress_str = f"Индивид {i + 1}/{len(current_population_configs)}"
                 task = delayed(evaluate_config)(
                     conf,
-                    model_wrapper,
+                    model_wrappers,
                     dataloader,
                     device,
                     progress_info=progress_str

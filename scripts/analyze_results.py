@@ -272,15 +272,29 @@ def main(results_path: str):
         if not pareto_front_df.empty:
             plot_pareto_front(all_trials_df, pareto_front_df, os.path.join(plots_dir, "pareto_front.png"))
 
-    logger.info("--- 3. Подготовка модели и данных для сравнения ---")
+    logger.info("--- 3. Подготовка моделей и данных для сравнения ---")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = get_model(exp_config['model']).to(device)
-    model = load_checkpoint(exp_config['model']['checkpoint_path'], model)['model']
+
+    model_wrappers = []
+    model_configs = []
+    if 'models' in exp_config:
+        model_configs.extend(exp_config['models'])
+    elif 'model' in exp_config:
+        model_configs.append(exp_config['model'])
+    else:
+        raise ValueError("...")
 
     dataset_name = exp_config['dataset']['name']
     stats = DATASET_STATS[dataset_name]
-    model_wrapper = ModelWrapper(model, mean=stats['mean'], std=stats['std'])
-    model_wrapper.eval()
+
+    for model_config in model_configs:
+        model = get_model(model_config).to(device)
+        model = load_checkpoint(model_config['checkpoint_path'], model)['model']
+        model_wrapper = ModelWrapper(model, mean=stats['mean'], std=stats['std'])
+        model_wrapper.eval()
+        model_wrappers.append(model_wrapper)
+
+    surrogate_model_wrapper = model_wrappers[0]
 
     full_eval_dataloader, _ = get_dataloader(
         dataset_name=dataset_name,
@@ -307,7 +321,7 @@ def main(results_path: str):
     comparison_results = []
     for name, config in attacks_to_compare.items():
         logger.info(f"Оценка атаки: {name}...")
-        results, _ = evaluate_config(config, model_wrapper, full_eval_dataloader, device)
+        results, _ = evaluate_config(config, model_wrappers, full_eval_dataloader, device)
         results['name'] = name
         comparison_results.append(results)
 
@@ -324,7 +338,7 @@ def main(results_path: str):
         images, labels = images.to(device), labels.to(device)
 
         with torch.no_grad():
-            clean_logits = model_wrapper(images)
+            clean_logits = surrogate_model_wrapper(images)
             clean_preds = torch.argmax(clean_logits, dim=1)
 
         correct_mask = (clean_preds == labels)
@@ -353,10 +367,10 @@ def main(results_path: str):
             logger.info(f"Генерация примеров для атаки: {name}...")
             config = _preprocess_config(config)
             runner = AttackRunner(config)
-            adv_images_batch = runner.attack(model_wrapper, original_images_batch, labels_batch)
+            adv_images_batch = runner.attack(surrogate_model_wrapper, original_images_batch, labels_batch)
 
             with torch.no_grad():
-                adv_logits = model_wrapper(adv_images_batch)
+                adv_logits = surrogate_model_wrapper(adv_images_batch)
                 adv_preds = torch.argmax(adv_logits, dim=1)
 
             for i in range(len(visual_examples_base)):
