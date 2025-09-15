@@ -36,7 +36,8 @@ class Trainer:
             device: torch.device,
             checkpoint_dir: str,
             attack_runner: Optional[AttackRunner] = None,
-            dataset_stats: Optional[Dict[str, list]] = None
+            dataset_stats: Optional[Dict[str, list]] = None,
+            val_attack_runner: Optional[AttackRunner] = None
     ):
         """
         :param model: Модель PyTorch для обучения.
@@ -60,37 +61,65 @@ class Trainer:
         self.checkpoint_dir = checkpoint_dir
         self.attack_runner = attack_runner
         self.dataset_stats = dataset_stats
+        self.val_attack_runner = val_attack_runner
         if self.attack_runner:
             logger.info("Тренер запущен в режиме состязательного обучения.")
+
+        self.train_model_wrapper = ModelWrapper(
+            self.model,
+            mean=self.dataset_stats['mean'],
+            std=self.dataset_stats['std']
+        )
+        self.val_model_wrapper = ModelWrapper(
+            self.model,
+            mean=self.dataset_stats['mean'],
+            std=self.dataset_stats['std']
+        )
 
         self.best_acc = 0.0
         os.makedirs(self.checkpoint_dir, exist_ok=True)
         logger.info(f"Тренер инициализирован. Устройство: {self.device}. "
                     f"Чекпоинты будут сохраняться в '{self.checkpoint_dir}'.")
 
-    def train(self, epochs: int):
+    def train(self, epochs: int, patience: int = 5):
         """
         Запускает полный цикл обучения на заданное количество эпох.
         """
         logger.info(f"Начало обучения на {epochs} эпох.")
+
+        best_robust_acc = 0.0
+        best_clean_acc = 0.0
+        epochs_without_improvement = 0
+
         for epoch in range(1, epochs + 1):
             train_loss, train_acc = self._train_one_epoch(epoch)
-
-            val_loss, val_acc = self._validate_one_epoch()
+            val_metrics = self._validate_one_epoch()
 
             self.scheduler.step()
 
             logger.info(
                 f"Эпоха {epoch}/{epochs} | "
                 f"Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f} | "
-                f"Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}"
+                f"Val Loss: {val_metrics.get('val_loss'):.4f}, Val Acc: {val_metrics.get('val_acc'):.4f} | "
+                f"Robust Val Loss: {val_metrics.get('robust_loss'):.4f}, "
+                f"Robust Val Acc: {val_metrics.get('robust_acc'):.4f}"
             )
 
-            is_best = val_acc > self.best_acc
+            current_robust_acc = val_metrics.get('robust_acc', val_metrics['val_acc'])
+            current_clean_acc = val_metrics.get('val_acc')
+
+            is_best = (current_robust_acc > best_robust_acc) or (current_clean_acc > best_clean_acc)
             if is_best:
-                self.best_acc = val_acc
+                if current_robust_acc > best_robust_acc:
+                    best_robust_acc = current_robust_acc
+                if current_clean_acc > best_clean_acc:
+                    best_clean_acc = current_clean_acc
+                self.best_acc = val_metrics.get('val_acc')
+                epochs_without_improvement = 0
                 logger.info(f"*** Новая лучшая точность на валидации: {self.best_acc:.4f}! "
                             f"Сохранение модели... ***")
+            else:
+                epochs_without_improvement += 1
 
             save_checkpoint(
                 state={
@@ -103,11 +132,16 @@ class Trainer:
                 is_best=is_best,
                 path=self.checkpoint_dir
             )
+
+            if epochs_without_improvement >= patience:
+                logger.info(f"Обучение остановлено досрочно: робастная точность не улучшалась {patience} эпох.")
+                break
+
         logger.info(f"Обучение завершено. Лучшая точность на валидации: {self.best_acc:.4f}")
 
     def _train_one_epoch(self, epoch_num: int) -> tuple[float, float]:
         """Выполняет один проход обучения по всему обучающему датасету."""
-        self.model.train()
+        self.train_model_wrapper.train()
         total_loss = 0.0
         correct_predictions = 0
         total_samples = 0
@@ -117,21 +151,15 @@ class Trainer:
             inputs, labels = inputs.to(self.device), labels.to(self.device)
 
             if self.attack_runner:
-                train_model_wrapper = ModelWrapper(
-                    self.model,
-                    mean=self.dataset_stats['mean'],
-                    std=self.dataset_stats['std']
-                )
-
                 adv_inputs = self.attack_runner.attack(
-                    train_model_wrapper,
+                    self.train_model_wrapper,
                     inputs,
                     labels,
                     keep_graph=True
                 )
-                outputs = self.model(adv_inputs)
+                outputs = self.train_model_wrapper(adv_inputs)
             else:
-                outputs = self.model(inputs)
+                outputs = self.train_model_wrapper(inputs)
 
             loss = self.criterion(outputs, labels)
 
@@ -151,9 +179,10 @@ class Trainer:
         avg_acc = correct_predictions / total_samples
         return avg_loss, avg_acc
 
-    def _validate_one_epoch(self) -> tuple[float, float]:
+    def _validate_one_epoch(self) -> Dict[str, float]:
         """Выполняет один проход валидации по всему валидационному датасету."""
-        self.model.eval()
+        self.val_model_wrapper.eval()
+        metrics = {}
         total_loss = 0.0
         correct_predictions = 0
         total_samples = 0
@@ -163,7 +192,7 @@ class Trainer:
             for inputs, labels in pbar:
                 inputs, labels = inputs.to(self.device), labels.to(self.device)
 
-                outputs = self.model(inputs)
+                outputs = self.val_model_wrapper(inputs)
                 loss = self.criterion(outputs, labels)
 
                 total_loss += loss.item() * inputs.size(0)
@@ -174,6 +203,40 @@ class Trainer:
                 pbar.set_postfix(Loss=f"{total_loss / total_samples:.4f}",
                                  Acc=f"{correct_predictions / total_samples:.4f}")
 
-        avg_loss = total_loss / total_samples
-        avg_acc = correct_predictions / total_samples
-        return avg_loss, avg_acc
+        clean_loss = total_loss / total_samples
+        clean_acc = correct_predictions / total_samples
+
+        metrics['val_loss'] = clean_loss
+        metrics['val_acc'] = clean_acc
+
+        if self.val_attack_runner:
+            total_loss_adv = 0.0
+            correct_predictions_adv = 0
+            total_samples_adv = 0
+
+            pbar_adv = tqdm(self.val_loader, desc="Робастная Валидация", leave=False, dynamic_ncols=True)
+
+            for inputs, labels in pbar_adv:
+                inputs, labels = inputs.to(self.device), labels.to(self.device)
+
+                adv_inputs = self.val_attack_runner.attack(self.val_model_wrapper, inputs, labels)
+
+                with torch.no_grad():
+                    outputs = self.val_model_wrapper(adv_inputs)
+                    loss = self.criterion(outputs, labels)
+
+                total_loss_adv += loss.item() * inputs.size(0)
+                _, predicted = torch.max(outputs.data, 1)
+                correct_predictions_adv += (predicted == labels).sum().item()
+                total_samples_adv += labels.size(0)
+
+                pbar_adv.set_postfix(Loss=f"{total_loss_adv / total_samples_adv:.4f}",
+                                     Acc=f"{correct_predictions_adv / total_samples_adv:.4f}")
+
+            robust_loss = total_loss_adv / total_samples_adv
+            robust_acc = correct_predictions_adv / total_samples_adv
+
+            metrics['robust_loss'] = robust_loss
+            metrics['robust_acc'] = robust_acc
+
+        return metrics

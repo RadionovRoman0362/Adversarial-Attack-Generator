@@ -132,6 +132,7 @@ def main(config_path: str):
     dataset_name = exp_config['dataset']['name']
     stats = DATASET_STATS[dataset_name]
     model_wrapper = ModelWrapper(model, mean=stats['mean'], std=stats['std'])
+    model_wrapper.eval()
 
     logger.info("Подготовка загрузчика данных для оценки...")
 

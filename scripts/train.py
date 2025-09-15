@@ -135,7 +135,8 @@ def main(config_path: str, resume_path: Optional[str] = None):
         device=device,
         checkpoint_dir=config['checkpoint_dir'],
         attack_runner=attack_runner,
-        dataset_stats=stats
+        dataset_stats=stats,
+        val_attack_runner=attack_runner
     )
     trainer.best_acc = best_acc
 

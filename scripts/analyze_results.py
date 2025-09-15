@@ -280,6 +280,7 @@ def main(results_path: str):
     dataset_name = exp_config['dataset']['name']
     stats = DATASET_STATS[dataset_name]
     model_wrapper = ModelWrapper(model, mean=stats['mean'], std=stats['std'])
+    model_wrapper.eval()
 
     full_eval_dataloader, _ = get_dataloader(
         dataset_name=dataset_name,
