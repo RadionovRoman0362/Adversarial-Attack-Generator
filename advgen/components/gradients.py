@@ -9,7 +9,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional
+from torch.autograd import Function
+from typing import Optional, List
 
 from .base import GradientComputer, Loss
 
@@ -21,15 +22,16 @@ class StandardGradient(GradientComputer):
 
     def compute(
             self,
-            model: nn.Module,
+            surrogate_model: nn.Module,
             images: torch.Tensor,
             labels: torch.Tensor,
-            loss_fn: Loss
+            loss_fn: Loss,
+            all_models: List[nn.Module] = None
     ) -> torch.Tensor:
         images.requires_grad = True
-        logits = model(images)
+        logits = surrogate_model(images)
         loss = loss_fn(logits, labels)
-        model.zero_grad()
+        surrogate_model.zero_grad()
         loss.backward()
         return images.grad.data
 
@@ -47,15 +49,16 @@ class MomentumGradient(GradientComputer):
 
     def compute(
             self,
-            model: nn.Module,
+            surrogate_model: nn.Module,
             images: torch.Tensor,
             labels: torch.Tensor,
-            loss_fn: Loss
+            loss_fn: Loss,
+            all_models: List[nn.Module] = None
     ) -> torch.Tensor:
         images.requires_grad = True
-        logits = model(images)
+        logits = surrogate_model(images)
         loss = loss_fn(logits, labels)
-        model.zero_grad()
+        surrogate_model.zero_grad()
         loss.backward()
 
         grad = images.grad.data
@@ -91,13 +94,14 @@ class AdversarialGradientSmoothing(GradientComputer):
 
     def compute(
             self,
-            model: nn.Module,
+            surrogate_model: nn.Module,
             images: torch.Tensor,
             labels: torch.Tensor,
-            loss_fn: Loss
+            loss_fn: Loss,
+            all_models: List[nn.Module] = None
     ) -> torch.Tensor:
         if self.num_samples <= 1 or self.noise_stddev == 0:
-            return StandardGradient().compute(model, images, labels, loss_fn)
+            return StandardGradient().compute(surrogate_model, images, labels, loss_fn)
 
         cumulative_grad = torch.zeros_like(images)
 
@@ -106,7 +110,7 @@ class AdversarialGradientSmoothing(GradientComputer):
 
             noisy_images = (images.detach() + noise).requires_grad_(True)
 
-            logits = model(noisy_images)
+            logits = surrogate_model(noisy_images)
             loss = loss_fn(logits, labels)
 
             grad, = torch.autograd.grad(
@@ -155,15 +159,16 @@ class InputDiversityGradient(GradientComputer):
 
     def compute(
             self,
-            model: nn.Module,
+            surrogate_model: nn.Module,
             images: torch.Tensor,
             labels: torch.Tensor,
-            loss_fn: Loss
+            loss_fn: Loss,
+            all_models: List[nn.Module] = None
     ) -> torch.Tensor:
         images_clone = images.clone().detach().requires_grad_(True)
         transformed_images = self.transform(images_clone)
 
-        logits = model(transformed_images)
+        logits = surrogate_model(transformed_images)
         loss = loss_fn(logits, labels)
         grad, = torch.autograd.grad(loss, images_clone)
         return grad
@@ -192,15 +197,16 @@ class TranslationInvariantGradient(GradientComputer):
 
     def compute(
             self,
-            model: nn.Module,
+            surrogate_model: nn.Module,
             images: torch.Tensor,
             labels: torch.Tensor,
-            loss_fn: Loss
+            loss_fn: Loss,
+            all_models: List[nn.Module] = None
     ) -> torch.Tensor:
         images.requires_grad = True
-        logits = model(images)
+        logits = surrogate_model(images)
         loss = loss_fn(logits, labels)
-        model.zero_grad()
+        surrogate_model.zero_grad()
         loss.backward()
 
         grad = images.grad.data
@@ -213,3 +219,167 @@ class TranslationInvariantGradient(GradientComputer):
         smoothed_grad = F.conv2d(grad, depthwise_kernel, groups=num_channels, padding='same')
 
         return smoothed_grad
+
+
+class EnsembleGradient(GradientComputer):
+    """
+    Вычисляет градиент как среднее градиентов от ансамбля моделей
+    для повышения переносимости атаки.
+    """
+    def compute(
+            self,
+            surrogate_model: nn.Module,
+            images: torch.Tensor,
+            labels: torch.Tensor,
+            loss_fn: Loss,
+            all_models: List[nn.Module] = None
+    ) -> torch.Tensor:
+
+        if not all_models:
+            # Фоллбэк на стандартный градиент, если доступна только одна модель
+            return StandardGradient().compute(surrogate_model, images, labels, loss_fn, all_models)
+
+        cumulative_grad = torch.zeros_like(images, requires_grad=False)
+
+        for model in all_models:
+            # Важно создавать копию images, чтобы градиенты не смешивались
+            images_clone = images.clone().detach().requires_grad_(True)
+
+            logits = model(images_clone)
+            loss = loss_fn(logits, labels)
+
+            model.zero_grad()  # Обнуляем градиенты конкретной модели
+
+            # Вычисляем градиент только по `images_clone`
+            grad, = torch.autograd.grad(loss, images_clone, only_inputs=True)
+
+            cumulative_grad += grad.detach()
+
+        # Усредняем градиент
+        avg_grad = cumulative_grad / len(all_models)
+        return avg_grad
+
+
+class SkipReLUFunction(Function):
+    @staticmethod
+    def forward(ctx, input):
+        return input.clamp(min=0)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        # Просто передаем градиент дальше, как если бы это был Identity
+        return grad_output
+
+
+class SGM(GradientComputer):
+    """
+    Реализует Skip Gradient Method (SGM) путем замены ReLU на кастомную
+    функцию с "прямым" градиентом во время обратного прохода.
+    """
+    def __init__(self):
+        super().__init__()
+        self.original_relus = {}
+
+    def _replace_relu(self, module):
+        """Рекурсивно заменяет все ReLU в модели."""
+        for name, child in module.named_children():
+            if isinstance(child, nn.ReLU):
+                # Сохраняем оригинальный ReLU, чтобы потом восстановить
+                self.original_relus[child] = child.forward
+                # Заменяем
+                child.forward = lambda x: SkipReLUFunction.apply(x)
+            else:
+                self._replace_relu(child)
+
+    def _restore_relu(self, module):
+        """Восстанавливает оригинальные ReLU."""
+        for name, child in module.named_children():
+            if isinstance(child, nn.ReLU) and child in self.original_relus:
+                child.forward = self.original_relus[child]
+            else:
+                self._restore_relu(child)
+        self.original_relus = {}
+
+    def compute(
+            self,
+            surrogate_model: nn.Module,
+            images: torch.Tensor,
+            labels: torch.Tensor,
+            loss_fn: Loss,
+            all_models: List[nn.Module] = None
+    ) -> torch.Tensor:
+
+        # Оборачиваем вычисление в try-finally для гарантии восстановления
+        try:
+            # 1. Заменяем все ReLU в модели на нашу "пропускающую" версию
+            self._replace_relu(surrogate_model)
+
+            # 2. Вычисляем градиент как обычно
+            images.requires_grad = True
+            logits = surrogate_model(images)
+            loss = loss_fn(logits, labels)
+            surrogate_model.zero_grad()
+            loss.backward()
+            grad = images.grad.data
+
+        finally:
+            # 3. Восстанавливаем оригинальные ReLU, чтобы не сломать модель
+            self._restore_relu(surrogate_model)
+
+        return grad
+
+
+class TAP(GradientComputer):
+    """
+    Вычисляет градиент на основе Transferable Adversarial Perturbations (TAP).
+    Минимизирует CE loss на суррогатной модели и KL-дивергенцию между
+    логитами суррогатной модели и других моделей в ансамбле.
+    """
+    def __init__(self, alpha: float = 1.0):
+        super().__init__()
+        self.alpha = alpha
+        self.kl_loss_fn = nn.KLDivLoss(reduction='batchmean')
+
+    def compute(
+            self,
+            surrogate_model: nn.Module,
+            images: torch.Tensor,
+            labels: torch.Tensor,
+            loss_fn: Loss,
+            all_models: List[nn.Module] = None
+    ) -> torch.Tensor:
+
+        if not all_models or len(all_models) < 2:
+            # Фоллбэк, если нет ансамбля для сравнения
+            return StandardGradient().compute(surrogate_model, images, labels, loss_fn, all_models)
+
+        images.requires_grad = True
+
+        # 1. Вычисляем CE loss на суррогатной модели
+        surrogate_logits = surrogate_model(images)
+        ce_loss = loss_fn(surrogate_logits, labels)
+
+        # 2. Вычисляем loss на основе расхождения логитов
+        kl_loss = torch.tensor(0.0, device=images.device)
+        surrogate_log_softmax = F.log_softmax(surrogate_logits, dim=1)
+
+        # Получаем список "других" моделей
+        other_models = [m for m in all_models if m is not surrogate_model]
+
+        with torch.no_grad():  # Градиент от других моделей нам не нужен
+            for other_model in other_models:
+                other_logits = other_model(images)
+                other_softmax = F.softmax(other_logits, dim=1)
+                kl_loss += self.kl_loss_fn(surrogate_log_softmax, other_softmax)
+
+        if other_models:
+            kl_loss /= len(other_models)
+
+        # 3. Комбинируем потери
+        total_loss = ce_loss + self.alpha * kl_loss
+
+        # 4. Вычисляем градиент от суммарной потери
+        surrogate_model.zero_grad()
+        total_loss.backward()
+
+        return images.grad.data

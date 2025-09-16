@@ -39,7 +39,10 @@ from .gradients import (
     MomentumGradient,
     AdversarialGradientSmoothing,
     InputDiversityGradient,
-    TranslationInvariantGradient
+    TranslationInvariantGradient,
+    EnsembleGradient,
+    SGM,
+    TAP
 )
 from .schedulers import (
     FixedStepScheduler,
@@ -83,6 +86,9 @@ COMPONENT_REGISTRY: Dict[str, Dict[str, Type[Any]]] = {
         "smooth_adv": AdversarialGradientSmoothing,
         "di": InputDiversityGradient,
         "ti": TranslationInvariantGradient,
+        "ensemble": EnsembleGradient,
+        "sgm": SGM,
+        "tap": TAP,
     },
     "scheduler": {
         "fixed": FixedStepScheduler,

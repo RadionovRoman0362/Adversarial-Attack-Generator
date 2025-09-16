@@ -5,7 +5,7 @@ AttackRunner "собирает" состязательную атаку из р�
 на основе предоставленной конфигурации и выполняет ее на батче данных.
 """
 
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 import torch
 
@@ -21,7 +21,7 @@ class AttackRunner:
     Класс-оркестратор, который выполняет итеративную состязательную атаку.
     """
 
-    def __init__(self, attack_config: Dict[str, Any]):
+    def __init__(self, attack_config: Dict[str, Any], all_model_wrappers: List[ModelWrapper]):
         """
         Инициализирует AttackRunner, создавая все необходимые компоненты
         на основе конфигурационного словаря.
@@ -39,6 +39,8 @@ class AttackRunner:
                               }
         """
         self.config = attack_config
+        self.all_model_wrappers = all_model_wrappers if all_model_wrappers else []
+
         self.epsilon = attack_config['epsilon']
         self.steps = attack_config['steps']
 
@@ -70,7 +72,7 @@ class AttackRunner:
 
     def attack(
             self,
-            model_wrapper: ModelWrapper,
+            surrogate_model_wrapper: ModelWrapper,
             images: torch.Tensor,
             labels: torch.Tensor,
             keep_graph: bool = False
@@ -78,7 +80,7 @@ class AttackRunner:
         """
         Выполняет полный цикл состязательной атаки.
 
-        :param model_wrapper: Обертка над атакуемой моделью.
+        :param surrogate_model_wrapper: Обертка над атакуемой моделью.
         :param images: Батч оригинальных изображений (тензор в [0, 1]).
         :param labels: Истинные метки для изображений.
         :param keep_graph: Сохранять граф для состязательного обучения.
@@ -93,14 +95,15 @@ class AttackRunner:
         for i in range(self.steps):
             adv_images.requires_grad = True
 
-            logits = model_wrapper.get_logits(adv_images)
+            logits = surrogate_model_wrapper.get_logits(adv_images)
             loss = self.loss_fn(logits, labels)
 
             grad = self.gradient_calc.compute(
-                model=model_wrapper,
+                surrogate_model=surrogate_model_wrapper,
                 images=adv_images,
                 labels=labels,
-                loss_fn=self.loss_fn
+                loss_fn=self.loss_fn,
+                all_models=self.all_model_wrappers
             )
 
             step_size = self.scheduler.get_step(

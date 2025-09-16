@@ -15,6 +15,7 @@
 from abc import ABC, abstractmethod
 import torch
 import torch.nn as nn
+from typing import List
 
 
 class Initializer(ABC):
@@ -71,19 +72,21 @@ class GradientComputer(ABC):
     @abstractmethod
     def compute(
         self,
-        model: nn.Module,
+        surrogate_model: nn.Module,
         images: torch.Tensor,
         labels: torch.Tensor,
-        loss_fn: Loss
+        loss_fn: Loss,
+        all_models: List[nn.Module] = None
     ) -> torch.Tensor:
         """
         Вычисляет градиент функции потерь по отношению к входным изображениям.
 
-        :param model: Атакуемая модель (обертка).
+        :param surrogate_model: Атакуемая модель (обертка).
         :param images: Тензор изображений, по которому нужно вычислить градиент
                        (должен иметь requires_grad=True).
         :param labels: Истинные метки для изображений.
         :param loss_fn: Экземпляр функции потерь для вычисления loss.
+        :param all_models: (Опционально) список моделей для градиентов, вычисляемых по нескольким моделям.
         :return: Тензор градиента той же формы, что и `images`.
         """
         pass

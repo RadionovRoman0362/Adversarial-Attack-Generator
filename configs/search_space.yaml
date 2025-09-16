@@ -33,6 +33,11 @@ components:
       - name: ti
         params:
           kernel_size: { type: choice, values: [3, 5, 7] }
+      - name: ensemble
+      - name: sgm
+      - name: tap
+        params:
+          alpha: { type: range_float, min: 0.5, max: 5.0, log: true }
 
 norm_specific_components:
   type: choice

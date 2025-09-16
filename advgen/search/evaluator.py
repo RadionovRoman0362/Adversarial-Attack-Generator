@@ -83,7 +83,7 @@ def evaluate_config(
     processed_attack_config = _preprocess_config(attack_config)
 
     try:
-        attack_runner = AttackRunner(processed_attack_config)
+        attack_runner = AttackRunner(processed_attack_config, model_wrappers)
         progress_prefix = f"{progress_info} | " if progress_info else ""
         logger.info(f"{progress_prefix}Оценка конфигурации: {attack_runner}")
     except (ValueError, TypeError) as e:
