@@ -88,6 +88,33 @@ class RandomSampler:
             sampled_node[key] = self._sample_from_space(value)
         return sampled_node
 
+    def get_param_spec(self, component_type: str, component_name: str, param_name: str, norm: str) -> Dict[str, Any]:
+        """
+        Находит и возвращает спецификацию (описание) для конкретного параметра.
+        Например, {'type': 'range_float', 'min': 0.001, 'max': 0.05, 'log': true}
+        """
+        spec_node = None
+
+        try:
+            component_options = self.space['components'][component_type]['values']
+            component_spec = next(c for c in component_options if c['name'] == component_name)
+            spec_node = component_spec['params'][param_name]
+            return spec_node
+        except (KeyError, StopIteration):
+            pass
+
+        try:
+            norm_blocks = self.space['norm_specific_components']['values']
+            norm_block = next(b for b in norm_blocks if b['name'] == norm)
+
+            component_options = norm_block['components'][component_type]['values']
+            component_spec = next(c for c in component_options if c['name'] == component_name)
+            spec_node = component_spec['params'][param_name]
+            return spec_node
+        except (KeyError, StopIteration):
+            raise ValueError(f"Спецификация для параметра {component_type}.{component_name}.{param_name} "
+                             f"для нормы {norm} не найдена в search_space.yaml")
+
 
 class OptunaSampler:
     """

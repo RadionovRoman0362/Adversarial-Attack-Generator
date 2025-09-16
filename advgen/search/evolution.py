@@ -33,15 +33,82 @@ class EvolutionarySampler:
             parents.append(self.population[winner_index_in_population])
         return parents
 
+    def _crossover_params(self, p1_params: Dict, p2_params: Dict, component_type: str, component_name: str) -> Dict:
+        """Скрещивает параметры двух компонентов одного типа."""
+        child_params = {}
+        all_param_keys = set(p1_params.keys()) | set(p2_params.keys())
+
+        for key in all_param_keys:
+            p1_val = p1_params.get(key)
+            p2_val = p2_params.get(key)
+
+            if p1_val is None or p2_val is None:
+                # Если у одного из родителей параметра нет, берем от того, у кого есть
+                child_params[key] = p1_val if p1_val is not None else p2_val
+                continue
+
+            # Получаем спецификацию параметра, чтобы понять, как его скрещивать
+            param_spec = self.random_sampler.get_param_spec(component_type, component_name, key, self.norm)
+            param_type = param_spec.get('type')
+
+            if param_type in ['range_float', 'range_int']:
+                # Арифметический кроссовер (BLX-alpha)
+                alpha = random.uniform(-0.5, 1.5)
+                val = p1_val + alpha * (p2_val - p1_val)
+
+                # Ограничиваем значение границами из спецификации
+                val = max(param_spec['min'], min(param_spec['max'], val))
+
+                if param_type == 'range_int':
+                    child_params[key] = int(round(val))
+                else:
+                    child_params[key] = val
+
+            elif param_type == 'choice':
+                # Однородный кроссовер для категориальных
+                child_params[key] = random.choice([p1_val, p2_val])
+
+            elif param_type == 'fixed':
+                # Для фиксированных значений просто берем любое
+                child_params[key] = p1_val
+            else:
+                # Если тип неизвестен, просто берем от одного из родителей
+                child_params[key] = random.choice([p1_val, p2_val])
+
+        return child_params
+
     def _crossover(self, parent1: Dict[str, Any], parent2: Dict[str, Any]) -> Dict[str, Any]:
         """Однородное скрещивание на уровне компонентов."""
         child = {}
-        all_component_keys = parent1.keys()
+        all_component_keys = set(parent1.keys()) | set(parent2.keys())
+
         for key in all_component_keys:
-            if random.random() < 0.5:
-                child[key] = copy.deepcopy(parent1[key])
+            p1_comp = parent1.get(key)
+            p2_comp = parent2.get(key)
+
+            if p1_comp is None or p2_comp is None:
+                child[key] = p1_comp if p1_comp is not None else p2_comp
+                continue
+
+            can_crossover_params = (
+                isinstance(p1_comp, dict) and isinstance(p2_comp, dict) and
+                'name' in p1_comp and 'name' in p2_comp and
+                p1_comp['name'] == p2_comp['name'] and
+                'params' in p1_comp and 'params' in p2_comp
+            )
+
+            if can_crossover_params and random.random() < 0.5:
+                child_comp = copy.deepcopy(p1_comp)
+
+                component_name = p1_comp['name']
+                p1_params = p1_comp.get('params', {})
+                p2_params = p2_comp.get('params', {})
+
+                child_comp['params'] = self._crossover_params(p1_params, p2_params, key, component_name)
+                child[key] = child_comp
             else:
-                child[key] = copy.deepcopy(parent2[key])
+                child[key] = copy.deepcopy(random.choice([p1_comp, p2_comp]))
+
         return child
 
     def _mutation(self, individual: Dict[str, Any]) -> Dict[str, Any]:
@@ -100,7 +167,8 @@ class EvolutionarySampler:
 
         return fronts
 
-    def _calculate_crowding_distance(self, front_indices: List[int], population_fitnesses: List[tuple]) -> Dict[
+    @staticmethod
+    def _calculate_crowding_distance(front_indices: List[int], population_fitnesses: List[tuple]) -> Dict[
         int, float]:
         """
         Вычисляет расстояние скученности для одного фронта.

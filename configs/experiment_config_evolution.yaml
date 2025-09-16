@@ -2,7 +2,7 @@
 search:
   sampler: "evolutionary"
   params:
-    population_size: 25
+    population_size: 5
     mutation_rate: 0.1
     tournament_size: 3
     objectives:
@@ -25,12 +25,26 @@ epsilon: 0.03137 # 8/255
 steps: 20
 norm: "linf" # Указываем, какую норму будем исследовать в этом поиске
 
-# --- Модель для Атаки ---
-model:
-  model_name: "resnet18_imagenet"
-  num_classes: 10
-  # Путь к ЛУЧШЕМУ сохраненному чекпоинту после обучения
-  checkpoint_path: "./checkpoints_imagenette_pgd7/model_best.pth.tar"
+# --- Модели для Атаки ---
+# Используем ключ `models` для указания списка моделей.
+# Первая модель в списке будет "суррогатной" для генерации атаки.
+# Лучше всего в качестве суррогатной использовать стандартную обученную модель,
+# так как атаки, сгенерированные на ней, лучше переносятся.
+models:
+  # Модель 1: Стандартная "чистая" модель (Суррогат)
+  - model_name: "resnet18_imagenet"
+    num_classes: 10
+    checkpoint_path: "./checkpoints_imagenette/model_best.pth.tar"
+
+  # Модель 2: Защищенная с помощью PGD-AT
+  - model_name: "resnet18_imagenet"
+    num_classes: 10
+    checkpoint_path: "./checkpoints_imagenette_pgd7/model_best.pth.tar"
+
+  # Модель 3: Защищенная с помощью TRADES
+  - model_name: "resnet18_imagenet"
+    num_classes: 10
+    checkpoint_path: "./checkpoints_imagenette_trades/model_best.pth.tar"
 
 # --- Датасет для Атаки ---
 dataset:
