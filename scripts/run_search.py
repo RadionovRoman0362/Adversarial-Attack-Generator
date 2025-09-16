@@ -269,7 +269,8 @@ def main(config_path: str):
             tournament_size=evo_config.get('tournament_size', 3),
             norm=exp_config['norm'],
             objectives=evo_config.get('objectives'),
-            constraints=evo_config.get('constraints')
+            constraints=evo_config.get('constraints'),
+            mutation_strategy=evo_config.get('mutation_strategy')
         )
         tb_logger = TensorBoardLogger(log_dir)
 

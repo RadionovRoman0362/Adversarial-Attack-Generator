@@ -7,7 +7,7 @@ from .samplers import RandomSampler
 
 class EvolutionarySampler:
     def __init__(self, search_space_path: str, population_size: int, mutation_rate: float, tournament_size: int,
-                 norm: str, objectives: List = None, constraints: List = None):
+                 norm: str, objectives: List = None, constraints: List = None, mutation_strategy: List[Dict] = None):
         self.random_sampler = RandomSampler(search_space_path)
         self.population_size = population_size
         self.mutation_rate = mutation_rate
@@ -16,6 +16,7 @@ class EvolutionarySampler:
         self.population: List[Dict[str, Any]] = []
         self.objectives = objectives if objectives else []
         self.constraints = constraints if constraints else []
+        self.mutation_strategy = mutation_strategy if mutation_strategy else []
 
     def initialize_population(self):
         """Создает начальную популяцию, переиспользуя RandomSampler."""
@@ -78,7 +79,10 @@ class EvolutionarySampler:
         return child_params
 
     def _crossover(self, parent1: Dict[str, Any], parent2: Dict[str, Any]) -> Dict[str, Any]:
-        """Однородное скрещивание на уровне компонентов."""
+        """
+        Иерархический кроссовер. Скрещивает компоненты, и если компоненты
+        одного типа - скрещивает их параметры.
+        """
         child = {}
         all_component_keys = set(parent1.keys()) | set(parent2.keys())
 
@@ -111,16 +115,134 @@ class EvolutionarySampler:
 
         return child
 
-    def _mutation(self, individual: Dict[str, Any]) -> Dict[str, Any]:
-        """Мутация через пересэмплирование одного из компонентов."""
+    def _mutate_parameter(self, individual: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Выполняет "тонкую настройку": выбирает один параметр и немного его изменяет.
+        """
         mutated_individual = copy.deepcopy(individual)
-        if random.random() < self.mutation_rate:
-            component_to_mutate = random.choice(list(mutated_individual.keys()))
 
-            temp_sample = self.random_sampler.sample(self.norm)
-            if component_to_mutate in temp_sample:
-                mutated_individual[component_to_mutate] = temp_sample[component_to_mutate]
+        # Выбираем компонент, у которого есть настраиваемые параметры
+        components_with_params = [
+            k for k, v in mutated_individual.items()
+            if isinstance(v, dict) and 'params' in v and v['params']
+        ]
+        if not components_with_params:
+            return mutated_individual  # Нечего мутировать
+
+        component_type = random.choice(components_with_params)
+        component_name = mutated_individual[component_type]['name']
+        params = mutated_individual[component_type]['params']
+
+        param_to_mutate = random.choice(list(params.keys()))
+
+        # Получаем спецификацию параметра
+        param_spec = self.random_sampler.get_param_spec(
+            component_type, component_name, param_to_mutate, self.norm
+        )
+        param_type = param_spec.get('type')
+        current_val = params[param_to_mutate]
+
+        if param_type == 'range_float':
+            # Гауссова мутация
+            sigma = (param_spec['max'] - param_spec['min']) * 0.1  # 10% от диапазона
+            new_val = current_val + random.normalvariate(0, sigma)
+            # Ограничиваем значение границами
+            new_val = max(param_spec['min'], min(param_spec['max'], new_val))
+            params[param_to_mutate] = new_val
+
+        elif param_type == 'range_int':
+            # Сдвиг на +/- 1
+            new_val = current_val + random.choice([-1, 1])
+            new_val = max(param_spec['min'], min(param_spec['max'], new_val))
+            params[param_to_mutate] = new_val
+
+        elif param_type == 'choice':
+            # Выбор другого значения из списка
+            possible_values = param_spec['values']
+            # Исключаем текущее значение, если есть другие варианты
+            other_values = [v for v in possible_values if v != current_val]
+            if other_values:
+                params[param_to_mutate] = random.choice(other_values)
+
         return mutated_individual
+
+    def _mutate_structural(self, individual: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Выполняет структурную мутацию: полностью заменяет один из компонентов.
+        """
+        mutated_individual = copy.deepcopy(individual)
+        component_to_mutate = random.choice(list(mutated_individual.keys()))
+
+        # Генерируем полный новый геном и берем оттуда только нужный компонент
+        temp_sample = self.random_sampler.sample(self.norm)
+        if component_to_mutate in temp_sample:
+            mutated_individual[component_to_mutate] = temp_sample[component_to_mutate]
+
+        return mutated_individual
+
+    def _mutate_inter_norm(self, individual: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Агрессивная мутация: заменяет один нормо-зависимый компонент
+        (кроме проектора) на компонент от другой нормы.
+        """
+        mutated_individual = copy.deepcopy(individual)
+
+        # Определяем список доступных норм и нормо-зависимых компонентов
+        all_norms = [b['name'] for b in self.random_sampler.space['norm_specific_components']['values']]
+        other_norms = [n for n in all_norms if n != self.norm]
+
+        if not other_norms:
+            return self._mutate_structural(individual)  # Фоллбэк, если других норм нет
+
+        # Компоненты, которые можно "одолжить" у другой нормы
+        # Исключаем 'projector', чтобы не нарушить валидность атаки
+        mutable_norm_components = [
+            key for key in individual.keys()
+            if key in ['initializer', 'updater', 'scheduler']
+        ]
+        if not mutable_norm_components:
+            return self._mutate_structural(individual)  # Фоллбэк
+
+        component_to_mutate = random.choice(mutable_norm_components)
+        target_norm = random.choice(other_norms)
+
+        # Генерируем геном для "чужой" нормы и берем оттуда компонент
+        try:
+            temp_sample = self.random_sampler.sample(target_norm)
+            if component_to_mutate in temp_sample:
+                print(f"Агрессивная мутация: {component_to_mutate} из нормы {self.norm} -> {target_norm}")
+                mutated_individual[component_to_mutate] = temp_sample[component_to_mutate]
+        except ValueError as e:
+            # Если у другой нормы нет такого компонента, делаем фоллбэк
+            print(f"Не удалось выполнить агрессивную мутацию: {e}. Выполняется структурная.")
+            return self._mutate_structural(individual)
+
+        return mutated_individual
+
+    def _mutation(self, individual: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Основной оператор мутации, который вызывает один из подтипов
+        в соответствии с вероятностями, заданными в конфигурации.
+        """
+        if random.random() >= self.mutation_rate:
+            return individual
+
+        if not self.mutation_strategy:
+            return self._mutate_structural(individual)
+
+        mutation_types = [s['type'] for s in self.mutation_strategy]
+        probabilities = [s['probability'] for s in self.mutation_strategy]
+
+        chosen_type = random.choices(mutation_types, weights=probabilities, k=1)[0]
+
+        if chosen_type == "parameter":
+            return self._mutate_parameter(individual)
+        elif chosen_type == "structural":
+            return self._mutate_structural(individual)
+        elif chosen_type == "inter_norm":
+            return self._mutate_inter_norm(individual)
+        else:
+            return self._mutate_structural(individual)
 
     @staticmethod
     def _dominates(ind1_fitness: tuple, ind2_fitness: tuple) -> bool:
