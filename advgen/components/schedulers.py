@@ -150,3 +150,131 @@ class AdaptiveStepScheduler(Scheduler):
         """Сбрасывает историю и размер шага до начальных значений."""
         self.loss_history = []
         self.step_size = self.initial_step_size
+
+
+class WarmupCosineDecayScheduler(Scheduler):
+    """
+    Планировщик, который сначала линейно увеличивает шаг ("прогрев"),
+    а затем уменьшает его по косинусоиде.
+    """
+    def __init__(self, max_step_size: float, warmup_steps: int):
+        super().__init__()
+        if max_step_size <= 0:
+            raise ValueError("Максимальный размер шага должен быть положительным.")
+        if warmup_steps < 0:
+            raise ValueError("Количество шагов для прогрева не может быть отрицательным.")
+        self.max_step_size = max_step_size
+        self.warmup_steps = warmup_steps
+
+    def get_step(self, current_step: int, total_steps: int, **kwargs) -> float:
+        """
+        Возвращает размер шага в зависимости от фазы: прогрев или затухание.
+        """
+        if self.warmup_steps > 0 and current_step < self.warmup_steps:
+            # Фаза прогрева: линейный рост от 0 до max_step_size
+            warmup_factor = (current_step + 1) / self.warmup_steps
+            return self.max_step_size * warmup_factor
+        else:
+            # Фаза затухания по косинусоиде
+            # Корректируем шаги, чтобы косинус начинался после прогрева
+            effective_total_steps = total_steps - self.warmup_steps
+            effective_current_step = current_step - self.warmup_steps
+
+            if effective_total_steps <= 1:
+                return self.max_step_size
+
+            cosine_decay = 0.5 * (1 + math.cos(math.pi * effective_current_step / (effective_total_steps - 1)))
+            return self.max_step_size * cosine_decay
+
+
+class CyclicLRStepScheduler(Scheduler):
+    """
+    Планировщик, который циклически изменяет размер шага между
+    base_step_size и max_step_size.
+    """
+    def __init__(self, base_step_size: float, max_step_size: float, cycle_steps: int):
+        super().__init__()
+        if base_step_size < 0 or max_step_size <= base_step_size:
+            raise ValueError("Параметры шага некорректны: 0 <= base_step_size < max_step_size.")
+        if cycle_steps <= 0:
+            raise ValueError("Длина цикла должна быть положительной.")
+
+        self.base_step_size = base_step_size
+        self.max_step_size = max_step_size
+        self.step_range = max_step_size - base_step_size
+        self.cycle_steps = cycle_steps
+        self.half_cycle = cycle_steps / 2.0
+
+    def get_step(self, current_step: int, total_steps: int, **kwargs) -> float:
+        """
+        Вычисляет размер шага на основе текущей позиции в цикле.
+        """
+        cycle_position = current_step % self.cycle_steps
+
+        cycle_multiplier = 1 - abs(cycle_position / self.half_cycle - 1)
+
+        return self.base_step_size + self.step_range * cycle_multiplier
+
+
+class PlateauReduceStepScheduler(Scheduler):
+    """
+    Уменьшает размер шага, когда функция потерь выходит на плато.
+    Атака максимизирует loss, поэтому "улучшение" - это его рост.
+    """
+    def __init__(self, initial_step_size: float, factor: float = 0.5, patience: int = 5, min_step_size: float = 1e-6):
+        super().__init__()
+        if not (0 < factor < 1):
+            raise ValueError("Фактор уменьшения должен быть в (0, 1).")
+        if patience < 0:
+            raise ValueError("Терпение не может быть отрицательным.")
+
+        self.step_size = initial_step_size
+        self.initial_step_size = initial_step_size
+        self.factor = factor
+        self.patience = patience
+        self.min_step_size = min_step_size
+
+        # Внутреннее состояние
+        self.patience_counter = 0
+        self.best_loss = -float('inf')
+
+    def get_step(self, current_step: int, total_steps: int, **kwargs) -> float:
+        """
+        Проверяет условие плато и при необходимости уменьшает размер шага.
+        """
+        loss_tensor: Optional[torch.Tensor] = kwargs.get("loss")
+        if loss_tensor is None:
+            # Если loss не предоставлен, работаем как FixedStepScheduler
+            return self.step_size
+
+        current_loss = loss_tensor.item()
+
+        # Считаем, что на первом шаге всегда есть "улучшение"
+        if current_step == 0:
+            self.best_loss = current_loss
+            return self.step_size
+
+        # "Улучшение" - это рост loss. Добавляем небольшой допуск (1e-4).
+        if current_loss > self.best_loss + 1e-4:
+            self.best_loss = current_loss
+            self.patience_counter = 0
+        else:
+            self.patience_counter += 1
+
+        if self.patience_counter >= self.patience:
+            # Плато достигнуто, уменьшаем шаг
+            new_step_size = self.step_size * self.factor
+            if new_step_size >= self.min_step_size:
+                print(
+                    f"Плато достигнуто на шаге {current_step}. Уменьшение шага: {self.step_size:.6f} -> {new_step_size:.6f}")
+                self.step_size = new_step_size
+            # Сбрасываем счетчик, чтобы дать новому шагу время поработать
+            self.patience_counter = 0
+
+        return self.step_size
+
+    def reset(self):
+        """Сбрасывает внутреннее состояние планировщика."""
+        self.step_size = self.initial_step_size
+        self.patience_counter = 0
+        self.best_loss = -float('inf')

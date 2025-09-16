@@ -61,6 +61,20 @@ norm_specific_components:
                 initial_step_size: { type: range_float, min: 0.01, max: 0.2 }
                 milestones_rel: { type: fixed, value: [0.5, 0.75] }
                 gamma: { type: fixed, value: 0.1 }
+            - name: warmup_cosine
+              params:
+                max_step_size: { type: range_float, min: 0.01, max: 0.2 }
+                warmup_steps_rel: { type: choice, values: [ 0.1, 0.2 ] }
+            - name: cyclic
+              params:
+                base_step_size: { type: range_float, min: 0.001, max: 0.01, log: true }
+                max_step_size: { type: range_float, min: 0.01, max: 0.1 }
+                cycle_steps_rel: { type: choice, values: [ 0.25, 0.5 ] }
+            - name: plateau
+              params:
+                initial_step_size: { type: range_float, min: 0.01, max: 0.2 }
+                factor: { type: fixed, value: 0.5 }
+                patience: { type: range_int, min: 3, max: 10 }
 
     - name: l2
       components:

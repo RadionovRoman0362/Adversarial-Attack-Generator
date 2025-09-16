@@ -44,6 +44,20 @@ def _preprocess_config(config: Dict[str, Any]) -> Dict[str, Any]:
         logger.debug(f"Конвертированы относительные вехи {rel_milestones} "
                      f"в абсолютные {abs_milestones} для {total_steps} шагов.")
 
+    if "warmup_steps_rel" in scheduler_params:
+        total_steps = processed_config.get("steps")
+        rel_warmup = scheduler_params.pop("warmup_steps_rel")
+        abs_warmup = int(rel_warmup * total_steps)
+        scheduler_params["warmup_steps"] = abs_warmup
+        logger.debug(f"Конвертирован warmup_steps_rel {rel_warmup} -> {abs_warmup}")
+
+    if "cycle_steps_rel" in scheduler_params:
+        total_steps = processed_config.get("steps")
+        rel_cycle = scheduler_params.pop("cycle_steps_rel")
+        abs_cycle = int(rel_cycle * total_steps)
+        scheduler_params["cycle_steps"] = abs_cycle
+        logger.debug(f"Конвертирован cycle_steps_rel {rel_cycle} -> {abs_cycle}")
+
     return processed_config
 
 

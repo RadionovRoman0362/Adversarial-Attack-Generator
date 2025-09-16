@@ -50,7 +50,10 @@ from .schedulers import (
     CosineAnnealingStepScheduler,
     ExponentialDecayStepScheduler,
     MultiStepDecayStepScheduler,
-    AdaptiveStepScheduler
+    AdaptiveStepScheduler,
+    WarmupCosineDecayScheduler,
+    CyclicLRStepScheduler,
+    PlateauReduceStepScheduler
 )
 from .projectors import (
     NoProjection,
@@ -97,6 +100,9 @@ COMPONENT_REGISTRY: Dict[str, Dict[str, Type[Any]]] = {
         "exponential": ExponentialDecayStepScheduler,
         "multistep": MultiStepDecayStepScheduler,
         "adaptive": AdaptiveStepScheduler,
+        "warmup_cosine": WarmupCosineDecayScheduler,
+        "cyclic": CyclicLRStepScheduler,
+        "plateau": PlateauReduceStepScheduler,
     },
     "projector": {
         "none": NoProjection,
