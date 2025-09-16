@@ -5,8 +5,17 @@ search:
     population_size: 25
     mutation_rate: 0.1
     tournament_size: 3
+    objectives:
+      - metric: "attack_success_rate"
+        direction: "maximize"
+      - metric: "avg_l2_norm"
+        direction: "minimize"
+    constraints:
+      - metric: "attack_success_rate"
+        type: "greater_than"
+        threshold: 0.1
 
-num_trials: 25         # Сколько случайных конфигураций протестировать
+num_trials: 3         # Сколько случайных конфигураций протестировать
 num_eval_samples: 500  # На скольких примерах оценивать каждую конфигурацию
 search_space_path: "configs/search_space.yaml"
 results_dir: "./results_evolutionary" # Директория для сохранения результатов

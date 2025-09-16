@@ -1,11 +1,11 @@
-model_name: "resnet18_imagenet" # <-- Используем стандартный ResNet
-dataset_name: "imagenette"    # <-- Новый датасет
+model_name: "resnet18_imagenet"
+dataset_name: "imagenette"
 num_classes: 10
 data_dir: "./data"
-checkpoint_dir: "./checkpoints_imagenette_pgd7" # <-- Новая папка для чекпоинтов
+checkpoint_dir: "./checkpoints_imagenette_pgd7"
 
-epochs: 20 # Для ImageNette хватит и поменьше эпох
-batch_size: 64 # Уменьшим батч, т.к. картинки больше
+epochs: 20
+batch_size: 64
 num_workers: 8
 device: "cuda"
 

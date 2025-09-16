@@ -1,19 +1,21 @@
 import random
 import copy
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Union
 
 from .samplers import RandomSampler
 
 
 class EvolutionarySampler:
     def __init__(self, search_space_path: str, population_size: int, mutation_rate: float, tournament_size: int,
-                 norm: str):
+                 norm: str, objectives: List = None, constraints: List = None):
         self.random_sampler = RandomSampler(search_space_path)
         self.population_size = population_size
         self.mutation_rate = mutation_rate
         self.tournament_size = tournament_size
         self.norm = norm
         self.population: List[Dict[str, Any]] = []
+        self.objectives = objectives if objectives else []
+        self.constraints = constraints if constraints else []
 
     def initialize_population(self):
         """Создает начальную популяцию, переиспользуя RandomSampler."""
@@ -53,15 +55,215 @@ class EvolutionarySampler:
                 mutated_individual[component_to_mutate] = temp_sample[component_to_mutate]
         return mutated_individual
 
-    def evolve(self, fitness_scores: List[float]):
+    @staticmethod
+    def _dominates(ind1_fitness: tuple, ind2_fitness: tuple) -> bool:
+        """Проверяет, доминирует ли индивид 1 над индивидом 2 (цели минимизируются)."""
+        not_worse = all(x <= y for x, y in zip(ind1_fitness, ind2_fitness))
+        strictly_better = any(x < y for x, y in zip(ind1_fitness, ind2_fitness))
+        return not_worse and strictly_better
+
+    def _non_dominated_sort(self, population_fitnesses: List[tuple]) -> List[List[int]]:
+        """
+        Выполняет быструю недоминируемую сортировку.
+        Возвращает список фронтов, где каждый фронт - это список индексов индивидов.
+        """
+        n = len(population_fitnesses)
+        dominating_counts = [0] * n
+        dominated_solutions = [[] for _ in range(n)]
+        fronts = [[]]
+
+        for i in range(n):
+            for j in range(i + 1, n):
+                if self._dominates(population_fitnesses[i], population_fitnesses[j]):
+                    dominated_solutions[i].append(j)
+                    dominating_counts[j] += 1
+                elif self._dominates(population_fitnesses[j], population_fitnesses[i]):
+                    dominated_solutions[j].append(i)
+                    dominating_counts[i] += 1
+
+            if dominating_counts[i] == 0:
+                fronts[0].append(i)
+
+        i = 0
+        while len(fronts[i]) > 0:
+            next_front = []
+            for p_idx in fronts[i]:
+                for q_idx in dominated_solutions[p_idx]:
+                    dominating_counts[q_idx] -= 1
+                    if dominating_counts[q_idx] == 0:
+                        next_front.append(q_idx)
+            i += 1
+            if next_front:
+                fronts.append(next_front)
+            else:
+                break
+
+        return fronts
+
+    def _calculate_crowding_distance(self, front_indices: List[int], population_fitnesses: List[tuple]) -> Dict[
+        int, float]:
+        """
+        Вычисляет расстояние скученности для одного фронта.
+        Возвращает словарь {индекс_индивида: расстояние}.
+        """
+        if not front_indices:
+            return {}
+
+        num_individuals = len(front_indices)
+        num_objectives = len(population_fitnesses[0])
+
+        # Инициализируем расстояния для всех индивидов на фронте
+        distances = {idx: 0.0 for idx in front_indices}
+
+        # Создаем временную структуру для удобства
+        front_fitnesses = {idx: population_fitnesses[idx] for idx in front_indices}
+
+        for m in range(num_objectives):
+            # Сортируем индивидов по m-й цели
+            sorted_indices = sorted(front_indices, key=lambda idx: front_fitnesses[idx][m])
+
+            # Крайним точкам присваиваем бесконечное расстояние
+            distances[sorted_indices[0]] = float('inf')
+            distances[sorted_indices[-1]] = float('inf')
+
+            # Если на фронте меньше 3 точек, расстояние для внутренних не считаем
+            if num_individuals <= 2:
+                continue
+
+            # Находим минимальное и максимальное значение цели для нормализации
+            min_obj_val = front_fitnesses[sorted_indices[0]][m]
+            max_obj_val = front_fitnesses[sorted_indices[-1]][m]
+
+            # Если все значения по цели одинаковы, пропускаем, чтобы избежать деления на ноль
+            if max_obj_val == min_obj_val:
+                continue
+
+            scale = max_obj_val - min_obj_val
+
+            # Проходим по внутренним точкам
+            for i in range(1, num_individuals - 1):
+                prev_idx = sorted_indices[i - 1]
+                next_idx = sorted_indices[i + 1]
+                current_idx = sorted_indices[i]
+
+                # Прибавляем нормализованное расстояние
+                distances[current_idx] += (front_fitnesses[next_idx][m] - front_fitnesses[prev_idx][m]) / scale
+
+        return distances
+
+    def _get_constraint_violation(self, individual_results: Dict[str, Any]) -> float:
+        """Вычисляет степень нарушения ограничений. 0, если все ОК."""
+        violation = 0.0
+        if not self.constraints:
+            return violation
+
+        for const in self.constraints:
+            metric = const['metric']
+            const_type = const['type']
+            threshold = const['threshold']
+            value = individual_results.get(metric)
+
+            if value is None:
+                # Назначаем большой штраф, если метрика отсутствует в результатах
+                violation += 1e6
+                continue
+
+            if const_type == 'greater_than':
+                if value < threshold:
+                    # Нарушение пропорционально "недобору" до порога
+                    violation += (threshold - value)
+            elif const_type == 'less_than':
+                if value > threshold:
+                    violation += (value - threshold)
+
+        return violation
+
+    def _crowded_tournament_selection(
+            self,
+            population_info: List[dict],
+            population_results: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        Отбор родителей с учетом принципа Constraint-Domination.
+        population_info содержит {'index', 'rank', 'distance'}.
+        population_results содержит полные словари с метриками.
+        """
+        parents = []
+        for _ in range(self.population_size):
+            # Выбираем двух случайных конкурентов из популяции
+            try:
+                p1_idx, p2_idx = random.sample(range(len(population_info)), 2)
+            except ValueError:
+                # Если в популяции меньше 2 особей, просто дублируем первую
+                p1_idx, p2_idx = 0, 0
+                if not population_info: return []
+
+            # Получаем всю информацию о конкурентах
+            p1_info = population_info[p1_idx]
+            p2_info = population_info[p2_idx]
+            p1_results = population_results[p1_idx]
+            p2_results = population_results[p2_idx]
+
+            # Вычисляем нарушения для каждого
+            p1_violation = self._get_constraint_violation(p1_results)
+            p2_violation = self._get_constraint_violation(p2_results)
+
+            winner_info = None
+            # --- Логика Constraint-Domination ---
+            if p1_violation == 0 and p2_violation > 0:
+                # p1 валиден, p2 - нет. p1 побеждает.
+                winner_info = p1_info
+            elif p1_violation > 0 and p2_violation == 0:
+                # p2 валиден, p1 - нет. p2 побеждает.
+                winner_info = p2_info
+            elif p1_violation > 0 and p2_violation > 0:
+                # Оба невалидны. Побеждает тот, кто меньше нарушает.
+                winner_info = p1_info if p1_violation < p2_violation else p2_info
+            else:
+                # Оба валидны. Используем стандартное сравнение NSGA-II (crowded-comparison operator).
+                if p1_info['rank'] < p2_info['rank']:
+                    winner_info = p1_info
+                elif p1_info['rank'] > p2_info['rank']:
+                    winner_info = p2_info
+                elif p1_info['distance'] > p2_info['distance']: # Ранги равны, выбираем по расстоянию скученности
+                    winner_info = p1_info
+                else: # Ранги и расстояния равны, выбираем случайно
+                    winner_info = random.choice([p1_info, p2_info])
+
+            parents.append(self.population[winner_info['index']])
+        return parents
+
+    def evolve(self, fitnesses: Union[List[float], List[tuple]], population_results: List[Dict[str, Any]]):
         """Выполняет один цикл эволюции: отбор -> скрещивание -> мутация."""
         print("Эволюция нового поколения...")
-        parents = self._selection(fitness_scores)
+
+        is_multiobjective = isinstance(fitnesses[0], tuple)
+        if not is_multiobjective:
+            parents = self._selection(fitnesses)
+        else:
+            fronts = self._non_dominated_sort(fitnesses)
+
+            population_info = []
+            for rank, front in enumerate(fronts):
+                distances = self._calculate_crowding_distance(front, fitnesses)
+                for idx in front:
+                    population_info.append({
+                        "index": idx,
+                        "rank": rank,
+                        "distance": distances[idx]
+                    })
+
+            parents = self._crowded_tournament_selection(population_info, population_results)
 
         new_population = []
+        if not parents:
+            print("Предупреждение: пул родителей пуст. Генерация случайных особей.")
+            self.initialize_population()
+            return
+
         for i in range(0, self.population_size, 2):
             parent1 = parents[i]
-            parent2 = parents[i + 1] if i + 1 < self.population_size else parents[i]
+            parent2 = parents[i + 1] if i + 1 < len(parents) else parents[0]
 
             child1 = self._crossover(parent1, parent2)
             child2 = self._crossover(parent2, parent1)

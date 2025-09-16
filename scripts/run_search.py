@@ -267,7 +267,9 @@ def main(config_path: str):
             population_size=population_size,
             mutation_rate=evo_config.get('mutation_rate', 0.1),
             tournament_size=evo_config.get('tournament_size', 3),
-            norm=exp_config['norm']
+            norm=exp_config['norm'],
+            objectives=evo_config.get('objectives'),
+            constraints=evo_config.get('constraints')
         )
         tb_logger = TensorBoardLogger(log_dir)
 
@@ -304,31 +306,59 @@ def main(config_path: str):
                 tasks_with_progress.append(task)
 
             results_list = Parallel(n_jobs=1)(tasks_with_progress)
+            population_results = [res[0] for res in results_list if res and res[0]]
+            all_trials_results.extend(population_results)
 
-            fitness_scores = [res[0].get('attack_success_rate', -1.0) for res in results_list]
-            all_trials_results.extend([res[0] for res in results_list])
+            objectives_config = evo_config.get('objectives')
+            if objectives_config:
+                logger.info("Работа в многоцелевом режиме.")
+                fitnesses_for_evolution = []
+                for res in population_results:
+                    fitness_tuple = []
+                    for obj in objectives_config:
+                        metric_val = res.get(obj['metric'], -1.0 if obj['direction'] == 'maximize' else float('inf'))
+                        if obj['direction'] == 'maximize':
+                            metric_val *= -1  # NSGA-II всегда минимизирует
+                        fitness_tuple.append(metric_val)
+                    fitnesses_for_evolution.append(tuple(fitness_tuple))
+            else:
+                logger.info("Работа в одноцелевом режиме (только ASR).")
+                fitnesses_for_evolution = [res.get('attack_success_rate', -1.0) for res in population_results]
+
+            asr_scores_for_logging = [res.get('attack_success_rate', -1.0) for res in population_results]
+            if not asr_scores_for_logging:
+                logger.warning("Не получено ни одного результата для оценки в этом поколении. Пропускаем.")
+                continue
 
             # Логирование в TensorBoard
-            tb_logger.log_generation_stats(sampler.population, fitness_scores, gen)
+            tb_logger.log_generation_stats(sampler.population, asr_scores_for_logging, gen)
 
             # Находим и сохраняем лучшего в этом поколении
-            best_idx = fitness_scores.index(max(fitness_scores))
-            best_fitness_in_gen = fitness_scores[best_idx]
-            best_config_in_gen = sampler.population[best_idx]
+            best_asr_in_gen = max(asr_scores_for_logging)
+            best_idx_in_gen = asr_scores_for_logging.index(best_asr_in_gen)
+            best_config_in_gen = sampler.population[best_idx_in_gen]
 
-            tb_logger.log_best_individual(best_config_in_gen, best_fitness_in_gen, gen)
+            tb_logger.log_best_individual(best_config_in_gen, best_asr_in_gen, gen)
 
             # Обновляем лучшего за все время
-            if best_fitness_in_gen > best_overall_fitness:
-                best_overall_fitness = best_fitness_in_gen
-                best_overall_config = results_list[best_idx][0]
+            if best_asr_in_gen > best_overall_fitness:
+                best_overall_fitness = best_asr_in_gen
+                best_overall_config = population_results[best_idx_in_gen]
                 logger.info(f"*** Найдена новая лучшая конфигурация! ASR: {best_overall_fitness:.4f} ***")
 
             # Эволюция
-            sampler.evolve(fitness_scores)
+            sampler.evolve(fitnesses_for_evolution, population_results)
 
         best_config_info = best_overall_config
         tb_logger.close()
+
+        logger.info("Поиск фронта Парето из всех результатов эволюции...")
+        pareto_front_results = find_pareto_front(all_trials_results)
+        logger.info(f"Найдено {len(pareto_front_results)} оптимальных по Парето решений в итоговой популяции.")
+
+        if not best_config_info:
+            if pareto_front_results:
+                best_config_info = max(pareto_front_results, key=lambda r: r.get('attack_success_rate', -1.0))
     else:
         raise ValueError(f"Неизвестный тип сэмплера: '{sampler_type}'. Доступны: 'random', 'optuna'.")
 

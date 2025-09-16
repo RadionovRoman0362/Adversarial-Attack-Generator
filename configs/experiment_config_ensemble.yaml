@@ -22,17 +22,17 @@ norm: "linf"     # Пространство поиска для L-infinity ат�
 # так как атаки, сгенерированные на ней, лучше переносятся.
 models:
   # Модель 1: Стандартная "чистая" модель (Суррогат)
-  - name: "resnet18_imagenet"
+  - model_name: "resnet18_imagenet"
     num_classes: 10
     checkpoint_path: "./checkpoints_imagenette/model_best.pth.tar"
 
   # Модель 2: Защищенная с помощью PGD-AT
-  - name: "resnet18_imagenet"
+  - model_name: "resnet18_imagenet"
     num_classes: 10
     checkpoint_path: "./checkpoints_imagenette_pgd7/model_best.pth.tar"
 
   # Модель 3: Защищенная с помощью TRADES
-  - name: "resnet18_imagenet"
+  - model_name: "resnet18_imagenet"
     num_classes: 10
     checkpoint_path: "./checkpoints_imagenette_trades/model_best.pth.tar"
 

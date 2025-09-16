@@ -107,8 +107,8 @@ class Trainer:
                 f"Эпоха {epoch}/{epochs} | "
                 f"Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f} | "
                 f"Val Loss: {val_metrics.get('val_loss'):.4f}, Val Acc: {val_metrics.get('val_acc'):.4f} | "
-                f"Robust Val Loss: {val_metrics.get('robust_loss'):.4f}, "
-                f"Robust Val Acc: {val_metrics.get('robust_acc'):.4f}"
+                f"Robust Val Loss: {val_metrics.get('robust_loss', 0):.4f}, "
+                f"Robust Val Acc: {val_metrics.get('robust_acc', 0):.4f}"
             )
 
             current_robust_acc = val_metrics.get('robust_acc', val_metrics['val_acc'])
