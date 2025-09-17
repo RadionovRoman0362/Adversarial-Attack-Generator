@@ -80,6 +80,25 @@ class RandomSampler:
             if sample_type == 'choice':
                 chosen_option = random.choice(space_definition['values'])
                 return self._sample_from_space(chosen_option)
+            if sample_type == 'composite':
+                max_depth = space_definition.get('max_depth', 3)
+                num_decorators = random.randint(0, max_depth)
+                terminal_config = self._sample_from_space(space_definition['terminal_components'])
+
+                if num_decorators == 0:
+                    return terminal_config
+
+                head_config = self._sample_from_space(space_definition['decorator_components'])
+                current_node = head_config
+
+                for _ in range(num_decorators - 1):
+                    next_decorator_config = self._sample_from_space(space_definition['decorator_components'])
+                    current_node['wrapped'] = next_decorator_config
+                    current_node = next_decorator_config
+
+                current_node['wrapped'] = terminal_config
+
+                return head_config
             
             raise ValueError(f"Неизвестный тип сэмплирования: {sample_type}")
 
@@ -91,15 +110,26 @@ class RandomSampler:
     def get_param_spec(self, component_type: str, component_name: str, param_name: str, norm: str) -> Dict[str, Any]:
         """
         Находит и возвращает спецификацию (описание) для конкретного параметра.
-        Например, {'type': 'range_float', 'min': 0.001, 'max': 0.05, 'log': true}
         """
-        spec_node = None
+        if component_type == 'gradient':
+            grad_space = self.space['components']['gradient']
+
+            for comp_spec in grad_space['terminal_components']['values']:
+                if comp_spec['name'] == component_name:
+                    if 'params' in comp_spec and param_name in comp_spec['params']:
+                        return comp_spec['params'][param_name]
+
+            for comp_spec in grad_space['decorator_components']['values']:
+                if comp_spec['name'] == component_name:
+                    if 'params' in comp_spec and param_name in comp_spec['params']:
+                        return comp_spec['params'][param_name]
 
         try:
-            component_options = self.space['components'][component_type]['values']
-            component_spec = next(c for c in component_options if c['name'] == component_name)
-            spec_node = component_spec['params'][param_name]
-            return spec_node
+            all_component_options = self.space.get('components', {})
+            if component_type in all_component_options:
+                component_options = all_component_options[component_type]['values']
+                component_spec = next(c for c in component_options if c['name'] == component_name)
+                return component_spec['params'][param_name]
         except (KeyError, StopIteration):
             pass
 
@@ -109,8 +139,7 @@ class RandomSampler:
 
             component_options = norm_block['components'][component_type]['values']
             component_spec = next(c for c in component_options if c['name'] == component_name)
-            spec_node = component_spec['params'][param_name]
-            return spec_node
+            return component_spec['params'][param_name]
         except (KeyError, StopIteration):
             raise ValueError(f"Спецификация для параметра {component_type}.{component_name}.{param_name} "
                              f"для нормы {norm} не найдена в search_space.yaml")
@@ -140,7 +169,16 @@ class OptunaSampler:
         final_config: Dict[str, Any] = {}
 
         general_components_space = self.space.get('components', {})
-        final_config.update(self._sample_from_space(trial, "", general_components_space))
+        for key, value in general_components_space.items():
+            if key == 'gradient':
+                optuna_grad_space = self.space.get('gradient_optuna')
+                if not optuna_grad_space:
+                    raise ValueError(
+                        "Для OptunaSampler в search_space.yaml должен быть определен блок 'gradient_optuna'")
+
+                final_config[key] = self._sample_flattened_composite(trial, "gradient_", optuna_grad_space)
+            else:
+                final_config[key] = self._sample_from_space(trial, f"{key}_", value)
 
         norm_specific_values = self.space['norm_specific_components']['values']
         target_norm_block = next((b for b in norm_specific_values if b['name'] == norm), None)
@@ -149,9 +187,59 @@ class OptunaSampler:
             raise ValueError(f"Блок для нормы '{norm}' не найден в search_space.yaml")
 
         norm_components_space = target_norm_block.get('components', {})
-        final_config.update(self._sample_from_space(trial, f"{norm}_", norm_components_space))
+        for key, value in norm_components_space.items():
+            final_config[key] = self._sample_from_space(trial, f"{norm}_{key}_", value)
 
         return final_config
+
+    def _sample_flattened_composite(self, trial: Trial, prefix: str, space_definition: Dict[str, Any]) -> Dict[
+        str, Any]:
+        """
+        Сэмплирует композитный компонент по принципу "плоских слотов" для Optuna.
+        """
+        max_depth = space_definition.get('max_depth', 3)
+
+        all_components = space_definition['decorator_options']['values'] + space_definition['terminal_options'][
+            'values']
+        all_params = {}
+
+        for comp_spec in all_components:
+            comp_name = comp_spec['name']
+            if comp_name == 'none':
+                continue
+            if 'params' in comp_spec:
+                all_params[comp_name] = self._sample_from_space(trial, f"{prefix}{comp_name}_",
+                                                                {'params': comp_spec['params']})
+
+        decorator_choices = [spec['name'] for spec in space_definition['decorator_options']['values']]
+        selected_components = []
+        for i in range(max_depth):
+            slot_name = f"{prefix}slot_{i + 1}"
+            chosen_decorator = trial.suggest_categorical(slot_name, decorator_choices)
+            if chosen_decorator != 'none':
+                selected_components.append(chosen_decorator)
+
+        terminal_choices = [spec['name'] for spec in space_definition['terminal_options']['values']]
+        chosen_terminal = trial.suggest_categorical(f"{prefix}terminal", terminal_choices)
+        selected_components.append(chosen_terminal)
+
+        chain = []
+        for comp_name in selected_components:
+            node = {'name': comp_name}
+            if comp_name in all_params and 'params' in all_params[comp_name]:
+                node['params'] = all_params[comp_name]['params']
+            chain.append(node)
+
+        if not chain:
+            return {}
+
+        head = chain[0]
+        current_node = head
+        for i in range(1, len(chain)):
+            current_node['wrapped'] = chain[i]
+            current_node = current_node['wrapped']
+
+        return head
 
     def _sample_from_space(self, trial: Trial, prefix: str, space_definition: Any) -> Any:
         """

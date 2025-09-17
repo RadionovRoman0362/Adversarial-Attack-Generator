@@ -1,37 +1,40 @@
+# configs/experiment_config_composite_optuna.yaml
+#
+# Конфигурация для запуска байесовского поиска (Optuna) композитных атак.
+# Optuna будет интеллектуально исследовать пространство поиска, чтобы найти
+# оптимальные по Парето решения, балансирующие между эффективностью (ASR)
+# и незаметностью (L2-норма).
+#
+# Запуск: python scripts/run_search.py --config configs/experiment_config_composite_optuna.yaml
+
 # --- Параметры Поиска ---
-# Используем Optuna для "умного" поиска компромисса между ASR и L2 нормой
 search:
   sampler: "optuna"
-  # Optuna будет максимизировать ASR (первое значение) и минимизировать L2 (второе)
+  # Задаем цели для многоцелевой оптимизации Optuna.
+  # Optuna будет пытаться одновременно:
+  # 1. Максимизировать первое возвращаемое значение из objective-функции (ASR).
+  # 2. Минимизировать второе возвращаемое значение (avg_l2_norm).
   direction: ["maximize", "minimize"]
 
-num_trials: 200
-num_eval_samples: 1000
+num_trials: 150         # Количество полных прогонов. Для Optuna нужно больше, чем для эволюции,
+                        # чтобы построить хорошую суррогатную модель.
+num_eval_samples: 1000  # На скольких примерах оценивать каждую атаку
 search_space_path: "configs/search_space.yaml"
-results_dir: "./results_ensemble"
+results_dir: "./results_composite_optuna" # Уникальная папка для результатов
 
 # --- Параметры Атаки (общие для всех прогонов) ---
 epsilon: 0.03137 # 8/255
-steps: 20        # Ищем достаточно сильные атаки
-norm: "linf"     # Пространство поиска для L-infinity атак
+steps: 40
+norm: "linf"
 
 # --- Модели для Атаки ---
-# Используем ключ `models` для указания списка моделей.
-# Первая модель в списке будет "суррогатной" для генерации атаки.
-# Лучше всего в качестве суррогатной использовать стандартную обученную модель,
-# так как атаки, сгенерированные на ней, лучше переносятся.
 models:
-  # Модель 1: Стандартная "чистая" модель (Суррогат)
   - model_name: "resnet18_imagenet"
     num_classes: 10
     checkpoint_path: "./checkpoints_imagenette/model_best.pth.tar"
-
-  # Модель 2: Защищенная с помощью PGD-AT
   - model_name: "resnet18_imagenet"
     num_classes: 10
     checkpoint_path: "./checkpoints_imagenette_pgd7/model_best.pth.tar"
-
-  # Модель 3: Защищенная с помощью TRADES
   - model_name: "resnet18_imagenet"
     num_classes: 10
     checkpoint_path: "./checkpoints_imagenette_trades/model_best.pth.tar"
@@ -40,5 +43,5 @@ models:
 dataset:
   name: "imagenette"
   data_dir: "./data"
-  batch_size: 64
-  num_workers: 8
+  batch_size: 32
+  num_workers: 4

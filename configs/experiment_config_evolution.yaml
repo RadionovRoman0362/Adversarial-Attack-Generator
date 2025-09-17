@@ -1,54 +1,55 @@
+# configs/experiment_config_composite_evo.yaml
+#
+# Конфигурация для запуска эволюционного поиска композитных атак.
+# Цель: найти наилучшую *структуру* и *параметры* градиентного метода
+# для атаки на ансамбль защищенных и незащищенных моделей.
+#
+# Запуск: python scripts/run_search.py --config configs/experiment_config_composite_evo.yaml
+
 # --- Параметры Поиска ---
 search:
   sampler: "evolutionary"
   params:
-    population_size: 5
-    mutation_rate: 0.2
+    population_size: 20   # Размер популяции (больше = лучше исследование, но медленнее)
+    mutation_rate: 0.8    # Высокая вероятность мутации, т.к. мы ищем новые структуры
     tournament_size: 3
+    # Многоцелевая оптимизация: максимизировать ASR, минимизировать заметность (L2)
     objectives:
       - metric: "attack_success_rate"
         direction: "maximize"
       - metric: "avg_l2_norm"
         direction: "minimize"
+    # Ограничение: не рассматриваем атаки, которые совсем не работают
     constraints:
       - metric: "attack_success_rate"
         type: "greater_than"
-        threshold: 0.1
+        threshold: 0.05
+    # Стратегия мутации: основной упор на изменение структуры градиента
     mutation_strategy:
-      - type: "parameter"
-        probability: 0.65
-      - type: "structural"
-        probability: 0.30
-      - type: "inter_norm"
-        probability: 0.05
+      - type: "structural"   # Мутация структуры (добавить/удалить/заменить декоратор)
+        probability: 0.6
+      - type: "parameter"     # Тонкая настройка параметров
+        probability: 0.4
 
-num_trials: 3         # Сколько случайных конфигураций протестировать
-num_eval_samples: 500  # На скольких примерах оценивать каждую конфигурацию
+num_trials: 15          # Количество поколений для эволюции
+num_eval_samples: 1000  # На скольких примерах оценивать каждую атаку
 search_space_path: "configs/search_space.yaml"
-results_dir: "./results_evolutionary" # Директория для сохранения результатов
+results_dir: "./results_composite_evo" # Уникальная папка для результатов
 
 # --- Параметры Атаки (общие для всех прогонов) ---
 epsilon: 0.03137 # 8/255
-steps: 20
-norm: "linf" # Указываем, какую норму будем исследовать в этом поиске
+steps: 40        # Увеличим число шагов для более сильных атак
+norm: "linf"
 
 # --- Модели для Атаки ---
-# Используем ключ `models` для указания списка моделей.
-# Первая модель в списке будет "суррогатной" для генерации атаки.
-# Лучше всего в качестве суррогатной использовать стандартную обученную модель,
-# так как атаки, сгенерированные на ней, лучше переносятся.
+# Первая модель (незащищенная) - суррогатная.
 models:
-  # Модель 1: Стандартная "чистая" модель (Суррогат)
   - model_name: "resnet18_imagenet"
     num_classes: 10
     checkpoint_path: "./checkpoints_imagenette/model_best.pth.tar"
-
-  # Модель 2: Защищенная с помощью PGD-AT
   - model_name: "resnet18_imagenet"
     num_classes: 10
     checkpoint_path: "./checkpoints_imagenette_pgd7/model_best.pth.tar"
-
-  # Модель 3: Защищенная с помощью TRADES
   - model_name: "resnet18_imagenet"
     num_classes: 10
     checkpoint_path: "./checkpoints_imagenette_trades/model_best.pth.tar"
@@ -57,5 +58,5 @@ models:
 dataset:
   name: "imagenette"
   data_dir: "./data"
-  batch_size: 64
-  num_workers: 8
+  batch_size: 32
+  num_workers: 4

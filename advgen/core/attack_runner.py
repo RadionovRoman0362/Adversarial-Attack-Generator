@@ -58,11 +58,10 @@ class AttackRunner:
 
     def _create_comp(self, comp_type: str) -> Any:
         """Вспомогательная функция для создания компонента из конфига."""
-        config = self.config[comp_type]
+        component_config = self.config[comp_type]
         return create_component(
             component_type=comp_type,
-            name=config['name'],
-            params=config.get('params', {})
+            config=component_config
         )
 
     def reset_components(self) -> None:
@@ -122,13 +121,48 @@ class AttackRunner:
 
         return adv_images if keep_graph else adv_images.detach()
 
+    @staticmethod
+    def _format_config_recursively(config: Dict[str, Any]) -> str:
+        """
+        Рекурсивно форматирует конфигурацию компонента для красивого вывода.
+        """
+        if not isinstance(config, dict) or 'name' not in config:
+            return str(config)
+
+        name = config.get('name')
+        params = config.get('params', {})
+
+        args_list = []
+        if params:
+            params_str = ", ".join(f"{k}={v}" for k, v in params.items())
+            args_list.append(params_str)
+
+        if 'wrapped' in config:
+            inner_str = AttackRunner._format_config_recursively(config['wrapped'])
+            args_list.append(f"wrapped={inner_str}")
+
+        args_str = ", ".join(args_list)
+        return f"{name}({args_str})"
+
     def __repr__(self) -> str:
         """Представление объекта для вывода и отладки."""
         repr_str = "AttackRunner(\n"
-        for comp_type, config in self.config.items():
+        config_to_print = self.config.copy()
+
+        attack_params = {
+            'epsilon': config_to_print.pop('epsilon', 'N/A'),
+            'steps': config_to_print.pop('steps', 'N/A'),
+            'norm': config_to_print.pop('norm', 'N/A')
+        }
+
+        for comp_type, config in config_to_print.items():
             if isinstance(config, dict):
-                repr_str += f"  {comp_type}: {config.get('name')}({config.get('params', {})}),\n"
+                formatted_str = self._format_config_recursively(config)
+                repr_str += f"  {comp_type}: {formatted_str},\n"
             else:
                 repr_str += f"  {comp_type}: {config},\n"
+        for name, value in attack_params.items():
+            repr_str += f"  {name}: {value},\n"
+
         repr_str += ")"
         return repr_str

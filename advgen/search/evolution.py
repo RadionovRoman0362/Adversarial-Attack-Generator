@@ -115,55 +115,136 @@ class EvolutionarySampler:
 
         return child
 
+    @staticmethod
+    def _get_gradient_chain(individual: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Разворачивает вложенную структуру градиента в плоский список (цепочку)."""
+        chain = []
+        curr = individual.get('gradient')
+        while curr:
+            node_copy = {k: v for k, v in curr.items() if k != 'wrapped'}
+            chain.append(node_copy)
+            curr = curr.get('wrapped')
+        return chain
+
+    @staticmethod
+    def _rebuild_gradient_from_chain(chain: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Собирает из плоского списка (цепочки) вложенную структуру градиента."""
+        if not chain:
+            return {}
+        head = copy.deepcopy(chain[0])
+        curr = head
+        for i in range(1, len(chain)):
+            curr['wrapped'] = copy.deepcopy(chain[i])
+            curr = curr['wrapped']
+        return head
+
     def _mutate_parameter(self, individual: Dict[str, Any]) -> Dict[str, Any]:
         """
         Выполняет "тонкую настройку": выбирает один параметр и немного его изменяет.
         """
         mutated_individual = copy.deepcopy(individual)
 
-        # Выбираем компонент, у которого есть настраиваемые параметры
-        components_with_params = [
-            k for k, v in mutated_individual.items()
-            if isinstance(v, dict) and 'params' in v and v['params']
-        ]
-        if not components_with_params:
-            return mutated_individual  # Нечего мутировать
+        mutable_params = []
+        for comp_type, comp_config in mutated_individual.items():
+            if comp_type != 'gradient':
+                if isinstance(comp_config, dict) and 'params' in comp_config:
+                    for param_name in comp_config['params']:
+                        mutable_params.append((comp_type, comp_config['name'], param_name, comp_config['params']))
+            else:
+                curr = comp_config
+                while curr:
+                    if 'params' in curr:
+                        for param_name in curr['params']:
+                            mutable_params.append(('gradient', curr['name'], param_name, curr['params']))
+                    curr = curr.get('wrapped')
 
-        component_type = random.choice(components_with_params)
-        component_name = mutated_individual[component_type]['name']
-        params = mutated_individual[component_type]['params']
+        if not mutable_params:
+            return mutated_individual
 
-        param_to_mutate = random.choice(list(params.keys()))
+        comp_type, comp_name, param_to_mutate, params_dict = random.choice(mutable_params)
 
-        # Получаем спецификацию параметра
         param_spec = self.random_sampler.get_param_spec(
-            component_type, component_name, param_to_mutate, self.norm
+            comp_type, comp_name, param_to_mutate, self.norm
         )
         param_type = param_spec.get('type')
-        current_val = params[param_to_mutate]
+        current_val = params_dict[param_to_mutate]
 
         if param_type == 'range_float':
-            # Гауссова мутация
-            sigma = (param_spec['max'] - param_spec['min']) * 0.1  # 10% от диапазона
+            sigma = (param_spec['max'] - param_spec['min']) * 0.1
             new_val = current_val + random.normalvariate(0, sigma)
-            # Ограничиваем значение границами
             new_val = max(param_spec['min'], min(param_spec['max'], new_val))
-            params[param_to_mutate] = new_val
-
+            params_dict[param_to_mutate] = new_val
         elif param_type == 'range_int':
-            # Сдвиг на +/- 1
             new_val = current_val + random.choice([-1, 1])
             new_val = max(param_spec['min'], min(param_spec['max'], new_val))
-            params[param_to_mutate] = new_val
-
+            params_dict[param_to_mutate] = new_val
         elif param_type == 'choice':
-            # Выбор другого значения из списка
-            possible_values = param_spec['values']
-            # Исключаем текущее значение, если есть другие варианты
-            other_values = [v for v in possible_values if v != current_val]
+            other_values = [v for v in param_spec['values'] if v != current_val]
             if other_values:
-                params[param_to_mutate] = random.choice(other_values)
+                params_dict[param_to_mutate] = random.choice(other_values)
 
+        return mutated_individual
+
+    def _mutate_gradient_structure(self, individual: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Выполняет одну из структурных мутаций над цепочкой градиентов.
+        """
+        mutated_individual = copy.deepcopy(individual)
+        grad_chain = self._get_gradient_chain(mutated_individual)
+
+        # Возможные операции: добавить, удалить, поменять декоратор, поменять терминальный компонент
+        operations = ['add', 'remove', 'swap', 'change_terminal']
+        # Вероятности: чаще добавляем/меняем, реже удаляем/меняем терминальный
+        weights = [0.4, 0.2, 0.3, 0.1]
+
+        if len(grad_chain) <= 1:
+            operations.remove('remove')
+            operations.remove('swap')
+
+        current_weights = [weights[i] for i, op in enumerate(['add', 'remove', 'swap', 'change_terminal']) if
+                           op in operations]
+        total_weight = sum(current_weights)
+        normalized_weights = [w / total_weight for w in current_weights]
+
+        op = random.choices(operations, weights=normalized_weights, k=1)[0]
+
+        grad_space = self.random_sampler.space['components']['gradient']
+
+        if op == 'add':
+            new_decorator = self.random_sampler._sample_from_space(grad_space['decorator_components'])
+            insert_pos = random.randint(0, len(grad_chain) - 1)
+            grad_chain.insert(insert_pos, new_decorator)
+            print(f"Мутация: добавлен декоратор '{new_decorator['name']}' на позицию {insert_pos}.")
+        elif op == 'remove':
+            decorator_indices = list(range(len(grad_chain) - 1))
+            if decorator_indices:
+                remove_pos = random.choice(decorator_indices)
+                removed_name = grad_chain[remove_pos]['name']
+                del grad_chain[remove_pos]
+                print(f"Мутация: удален декоратор '{removed_name}' с позиции {remove_pos}.")
+        elif op == 'swap':
+            decorator_indices = list(range(len(grad_chain) - 1))
+            if decorator_indices:
+                swap_pos = random.choice(decorator_indices)
+                old_name = grad_chain[swap_pos]['name']
+                possible_new = [d for d in grad_space['decorator_components']['values'] if d['name'] != old_name]
+                if possible_new:
+                    new_decorator_spec = random.choice(possible_new)
+                    new_decorator = self.random_sampler._sample_from_space(new_decorator_spec)
+                    grad_chain[swap_pos] = new_decorator
+                    print(
+                        f"Мутация: заменен декоратор '{old_name}' на '{new_decorator['name']}' на позиции {swap_pos}."
+                    )
+        elif op == 'change_terminal':
+            old_name = grad_chain[-1]['name']
+            possible_new = [t for t in grad_space['terminal_components']['values'] if t['name'] != old_name]
+            if possible_new:
+                new_terminal_spec = random.choice(possible_new)
+                new_terminal = self.random_sampler._sample_from_space(new_terminal_spec)
+                grad_chain[-1] = new_terminal
+                print(f"Мутация: заменен терминальный компонент '{old_name}' на '{new_terminal['name']}'.")
+
+        mutated_individual['gradient'] = self._rebuild_gradient_from_chain(grad_chain)
         return mutated_individual
 
     def _mutate_structural(self, individual: Dict[str, Any]) -> Dict[str, Any]:
@@ -173,12 +254,13 @@ class EvolutionarySampler:
         mutated_individual = copy.deepcopy(individual)
         component_to_mutate = random.choice(list(mutated_individual.keys()))
 
-        # Генерируем полный новый геном и берем оттуда только нужный компонент
-        temp_sample = self.random_sampler.sample(self.norm)
-        if component_to_mutate in temp_sample:
-            mutated_individual[component_to_mutate] = temp_sample[component_to_mutate]
-
-        return mutated_individual
+        if component_to_mutate == 'gradient':
+            return self._mutate_gradient_structure(mutated_individual)
+        else:
+            temp_sample = self.random_sampler.sample(self.norm)
+            if component_to_mutate in temp_sample:
+                mutated_individual[component_to_mutate] = temp_sample[component_to_mutate]
+            return mutated_individual
 
     def _mutate_inter_norm(self, individual: Dict[str, Any]) -> Dict[str, Any]:
         """

@@ -121,24 +121,32 @@ COMPONENT_REGISTRY: Dict[str, Dict[str, Type[Any]]] = {
 }
 
 
-def create_component(component_type: str, name: str, params: Dict[str, Any] = None) -> Any:
+def create_component(component_type: str, config: Dict[str, Any]) -> Any:
     """
-    Фабричная функция для создания экземпляров компонентов.
+    Фабричная функция для создания экземпляров компонентов с поддержкой
+    рекурсивной композиции (паттерн "Декоратор").
 
-    Находит класс компонента в реестре по его типу и имени, а затем
-    создает его экземпляр, передавая в конструктор параметры.
+    Находит класс компонента в реестре по его типу и имени. Если в конфигурации
+    присутствует ключ 'wrapped', функция рекурсивно вызывает саму себя для
+    создания вложенного компонента, а затем передает его в конструктор
+    компонента-декоратора.
 
     :param component_type: Тип компонента (ключ верхнего уровня в реестре,
-                           например, 'loss', 'scheduler').
-    :param name: Имя конкретной реализации (ключ второго уровня,
-                 например, 'cross_entropy', 'fixed').
-    :param params: Словарь с параметрами для конструктора класса.
-                   Если None, компонент создается без параметров.
+                           например, 'gradient').
+    :param config: Словарь с конфигурацией для компонента.
+                   Пример: {'name': 'momentum', 'params': {...}, 'wrapped': {'name': 'standard'}}
     :return: Экземпляр запрошенного компонента.
     :raises ValueError: Если компонент с указанным типом или именем не найден.
+    :raises TypeError: Если переданы некорректные параметры в конструктор.
     """
-    if params is None:
-        params = {}
+    if not config:
+        return None
+
+    name = config.get('name')
+    if not name:
+        raise ValueError(f"В конфигурации компонента типа '{component_type}' отсутствует обязательный ключ 'name'.")
+
+    params = config.get('params', {}).copy()
 
     try:
         component_cls = COMPONENT_REGISTRY[component_type][name]
@@ -149,14 +157,28 @@ def create_component(component_type: str, name: str, params: Dict[str, Any] = No
             f"Для типа '{component_type}' доступны имена: {list(COMPONENT_REGISTRY.get(component_type, {}).keys())}."
         )
 
+    if 'wrapped' in config:
+        wrapped_config = config['wrapped']
+        wrapped_component = create_component(component_type, wrapped_config)
+
+        if component_type == 'gradient':
+            params['wrapped_computer'] = wrapped_component
+        else:
+            pass
+
     try:
         return component_cls(**params)
     except TypeError as e:
+        import inspect
+        sig = inspect.signature(component_cls.__init__)
+        expected_params = list(sig.parameters.keys())
+        expected_params.remove('self')
+
         raise TypeError(
             f"Ошибка при создании компонента '{name}' типа '{component_type}' "
-            f"с параметрами {params}.\n"
-            f"Проверьте, что все необходимые параметры для конструктора "
-            f"'{component_cls.__name__}' переданы.\n"
+            f"с параметрами {list(params.keys())}.\n"
+            f"Конструктор '{component_cls.__name__}' ожидает параметры: {expected_params}.\n"
+            f"Проверьте, что все необходимые параметры (включая 'wrapped_computer' для декораторов) переданы.\n"
             f"Оригинальная ошибка: {e}"
         )
 

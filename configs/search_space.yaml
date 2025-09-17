@@ -5,21 +5,48 @@ components:
       - name: cross_entropy
       - name: cw
         params:
-          kappa:
-            type: range_float
-            min: 0.0
-            max: 20.0
+          kappa: { type: range_float, min: 0.0, max: 20.0 }
       - name: dlr
         params:
-          k:
-            type: fixed
-            value: 3
+          k: { type: fixed, value: 3 }
       - name: popper
 
   gradient:
+    type: composite
+    max_depth: 3
+    terminal_components:
+      type: choice
+      values:
+        - name: standard
+        - name: di
+          params:
+            prob: { type: fixed, value: 0.7 }
+        - name: tap
+          params:
+            alpha: { type: range_float, min: 0.5, max: 5.0, log: true }
+    decorator_components:
+      type: choice
+      values:
+        - name: momentum
+          params:
+            decay_factor: { type: fixed, value: 1.0 }
+        - name: smooth_adv
+          params:
+            num_samples: { type: range_int, min: 3, max: 15 }
+            noise_stddev: { type: range_float, min: 0.05, max: 0.25 }
+        - name: ti
+          params:
+            kernel_size: { type: choice, values: [3, 5, 7] }
+        - name: ensemble
+        - name: sgm
+
+gradient_optuna:
+  type: flattened_composite
+  max_depth: 3
+  decorator_options:
     type: choice
     values:
-      - name: standard
+      - name: none
       - name: momentum
         params:
           decay_factor: { type: fixed, value: 1.0 }
@@ -27,14 +54,18 @@ components:
         params:
           num_samples: { type: range_int, min: 3, max: 15 }
           noise_stddev: { type: range_float, min: 0.05, max: 0.25 }
+      - name: ti
+        params:
+          kernel_size: { type: choice, values: [ 3, 5, 7 ] }
+      - name: ensemble
+      - name: sgm
+  terminal_options:
+    type: choice
+    values:
+      - name: standard
       - name: di
         params:
           prob: { type: fixed, value: 0.7 }
-      - name: ti
-        params:
-          kernel_size: { type: choice, values: [3, 5, 7] }
-      - name: ensemble
-      - name: sgm
       - name: tap
         params:
           alpha: { type: range_float, min: 0.5, max: 5.0, log: true }
