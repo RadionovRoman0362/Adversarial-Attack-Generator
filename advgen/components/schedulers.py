@@ -262,13 +262,9 @@ class PlateauReduceStepScheduler(Scheduler):
             self.patience_counter += 1
 
         if self.patience_counter >= self.patience:
-            # Плато достигнуто, уменьшаем шаг
             new_step_size = self.step_size * self.factor
             if new_step_size >= self.min_step_size:
-                print(
-                    f"Плато достигнуто на шаге {current_step}. Уменьшение шага: {self.step_size:.6f} -> {new_step_size:.6f}")
                 self.step_size = new_step_size
-            # Сбрасываем счетчик, чтобы дать новому шагу время поработать
             self.patience_counter = 0
 
         return self.step_size
