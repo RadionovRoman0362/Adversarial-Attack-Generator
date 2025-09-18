@@ -19,11 +19,10 @@ import os
 import sys
 from datetime import datetime
 from typing import Dict, Any, List
-import gc
 import optuna
+import pickle
 
 import torch
-import torch.nn as nn
 import yaml
 
 from joblib import Parallel, delayed
@@ -171,6 +170,10 @@ def main(config_path: str):
     all_trials_results = []
     best_config_info = {"attack_success_rate": -1.0}
 
+    results_dir = exp_config.get('results_dir', './results')
+    os.makedirs(results_dir, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
     if sampler_type == 'optuna':
         logger.info("Запуск поиска с использованием Optuna (байесовская оптимизация).")
         optuna_sampler = OptunaSampler(exp_config['search_space_path'])
@@ -191,6 +194,11 @@ def main(config_path: str):
 
         study = optuna.create_study(directions=["maximize", "minimize"])
         study.optimize(objective, n_trials=num_trials)
+
+        study_path = os.path.join(results_dir, f"optuna_study_{timestamp}.pkl")
+        with open(study_path, "wb") as f_out:
+            pickle.dump(study, f_out)
+        logger.info(f"Объект Optuna Study сохранен в: {study_path}")
 
         pareto_front_trials = study.best_trials
         logger.info(f"Найдено {len(pareto_front_trials)} оптимальных по Парето решений.")
@@ -307,7 +315,12 @@ def main(config_path: str):
                 tasks_with_progress.append(task)
 
             results_list = Parallel(n_jobs=1)(tasks_with_progress)
-            population_results = [res[0] for res in results_list if res and res[0]]
+            population_results = []
+            for res in results_list:
+                if res and res[0]:
+                    res_data = res[0]
+                    res_data['generation'] = gen
+                    population_results.append(res_data)
             all_trials_results.extend(population_results)
 
             objectives_config = evo_config.get('objectives')
@@ -341,6 +354,8 @@ def main(config_path: str):
 
             tb_logger.log_best_individual(best_config_in_gen, best_asr_in_gen, gen)
 
+            tb_logger.log_population_distribution_plot(sampler.population, gen)
+
             # Обновляем лучшего за все время
             if best_asr_in_gen > best_overall_fitness:
                 best_overall_fitness = best_asr_in_gen
@@ -363,9 +378,6 @@ def main(config_path: str):
     else:
         raise ValueError(f"Неизвестный тип сэмплера: '{sampler_type}'. Доступны: 'random', 'optuna'.")
 
-    results_dir = exp_config.get('results_dir', './results')
-    os.makedirs(results_dir, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     results_filename = f"search_results_{timestamp}.json"
     results_filepath = os.path.join(results_dir, results_filename)
     logger.info(f"Результаты будут сохраняться в: {results_filepath}")

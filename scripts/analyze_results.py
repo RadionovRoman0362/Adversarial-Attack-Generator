@@ -17,7 +17,10 @@
 import argparse
 import json
 import logging
+import pickle
+
 import optuna
+from optuna.visualization import plot_param_importances, plot_slice, plot_parallel_coordinate
 import os
 import sys
 from typing import Dict, Any, List
@@ -27,11 +30,8 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 import torch
-import torch.nn as nn
-import torchvision.models as models
 import yaml
 
-# Добавляем корневую директорию проекта в PYTHONPATH
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from advgen.core.attack_runner import AttackRunner
@@ -44,6 +44,69 @@ from advgen.utils.logging_setup import setup_logging
 
 
 # --- Функции для визуализации ---
+
+def plot_component_dynamics(df: pd.DataFrame, save_path: str):
+    """Строит график динамики популярности компонентов градиента."""
+    if 'generation' not in df.columns or 'processed_config' not in df.columns:
+        return
+
+    def get_grad_components_from_config(config):
+        chain = []
+        curr = config.get('gradient', {})
+        while curr:
+            chain.append(curr.get('name'))
+            curr = curr.get('wrapped')
+        return chain
+
+    dynamics_data = []
+    for gen, group in df.groupby('generation'):
+        all_components = []
+        for config in group['processed_config']:
+            all_components.extend(get_grad_components_from_config(config))
+
+        counts = pd.Series(all_components).value_counts()
+        counts.name = gen
+        dynamics_data.append(counts)
+
+    dynamics_df = pd.DataFrame(dynamics_data).fillna(0).sort_index()
+    dynamics_df = dynamics_df.reindex(sorted(dynamics_df.columns), axis=1)  # Сортируем для красивой легенды
+
+    fig, ax = plt.subplots(figsize=(14, 8))
+    dynamics_df.plot(kind='area', stacked=True, ax=ax, colormap='viridis')
+
+    ax.set_title("Динамика популярности компонентов градиента по поколениям", fontsize=16)
+    ax.set_xlabel("Поколение")
+    ax.set_ylabel("Количество в популяции")
+    ax.legend(title='Компоненты', bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.tight_layout()
+    plt.savefig(save_path)
+    plt.close()
+    logging.info(f"График динамики компонентов сохранен в: {save_path}")
+
+def plot_evolution_history(df: pd.DataFrame, save_path: str):
+    """Строит график истории улучшения для эволюционного алгоритма."""
+    if 'generation' not in df.columns:
+        logging.warning("Нет данных о поколениях для построения графика истории эволюции.")
+        return
+
+    plt.figure(figsize=(12, 8))
+    sns.set_theme(style="whitegrid")
+
+    best_per_gen = df.groupby('generation')['attack_success_rate'].max()
+    best_so_far = best_per_gen.cummax()
+
+    plt.plot(best_so_far.index, best_so_far.values, marker='o', linestyle='-', label='Лучший ASR на данный момент')
+
+    sns.scatterplot(data=df, x='generation', y='attack_success_rate', color='gray', alpha=0.2, label='ASR индивидов')
+
+    plt.title("История оптимизации (Эволюционный поиск)", fontsize=16)
+    plt.xlabel("Поколение")
+    plt.ylabel("Attack Success Rate (ASR)")
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(save_path)
+    plt.close()
+    logging.info(f"График истории эволюции сохранен в: {save_path}")
 
 def plot_pareto_front(all_trials_df: pd.DataFrame, pareto_front_df: pd.DataFrame, save_path: str):
     """Строит диаграмму рассеяния, выделяя фронт Парето."""
@@ -256,13 +319,110 @@ def main(results_path: str):
     os.makedirs(plots_dir, exist_ok=True)
     logger.info(f"Графики и анализ будут сохранены в: {plots_dir}")
 
+    all_trials_df = pd.DataFrame(results_data['all_trials']).dropna(subset=['attack_success_rate'])
     if exp_config.get('search', {}).get('sampler') == 'optuna':
         logger.info("--- 2. Генерация графика истории оптимизации ---")
-        all_trials_df = pd.DataFrame(results_data['all_trials']).dropna(subset=['attack_success_rate'])
         if not all_trials_df.empty:
             plot_optimization_history(all_trials_df, os.path.join(plots_dir, "optuna_history.png"))
         else:
             logger.warning("Нет данных для построения графика истории оптимизации.")
+
+        logger.info("--- 2.5. Анализ важности гиперпараметров Optuna ---")
+        optuna_filename = base_filename.replace("search_results_", "")
+        study_path = os.path.join(analysis_dir, f"optuna_study_{optuna_filename}.pkl")
+        if os.path.exists(study_path):
+            with open(study_path, "rb") as f_in:
+                study = pickle.load(f_in)
+
+            completed_trials = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
+            if not completed_trials:
+                logger.warning("В исследовании Optuna нет завершенных прогонов. Пропускаем анализ параметров.")
+            else:
+                existing_params = set(completed_trials[0].params.keys())
+
+                try:
+                    fig = plot_param_importances(study, target=lambda t: t.values[0], target_name="ASR")
+                    fig.update_layout(title="Важность гиперпараметров для ASR (Optuna)")
+                    fig.write_image(os.path.join(plots_dir, "optuna_param_importances_asr.png"))
+
+                    fig = plot_param_importances(study, target=lambda t: t.values[1], target_name="L2 Norm")
+                    fig.update_layout(title="Важность гиперпараметров для L2-нормы (Optuna)")
+                    fig.write_image(os.path.join(plots_dir, "optuna_param_importances_l2.png"))
+
+                    logger.info("Графики важности параметров Optuna сохранены.")
+                except Exception as e:
+                    logger.warning(f"Не удалось построить график важности параметров: {e}")
+
+                logger.info("--- 2.6. Анализ срезов для ключевых компонентов (Optuna) ---")
+                try:
+                    key_component_params = [
+                        'loss_',
+                        'gradient_terminal',
+                        'gradient_slot_1',
+                        'gradient_slot_2',
+                        'gradient_slot_3',
+                        'scheduler'
+                        'initializer',
+                        'projector',
+                        'updater'
+                    ]
+
+                    params_to_plot_slice = [p for p in key_component_params if p in existing_params]
+
+                    for param in params_to_plot_slice:
+                        fig_asr = plot_slice(study, params=[param], target=lambda t: t.values[0], target_name="ASR")
+                        fig_asr.update_layout(title=f"Влияние компонента '{param}' на ASR")
+                        fig_asr.write_image(os.path.join(plots_dir, f"optuna_slice_{param}_asr.png"))
+
+                        fig_l2 = plot_slice(study, params=[param], target=lambda t: t.values[1], target_name="L2 Norm")
+                        fig_l2.update_layout(title=f"Влияние компонента '{param}' на L2-норму")
+                        fig_l2.write_image(os.path.join(plots_dir, f"optuna_slice_{param}_l2.png"))
+
+                    logger.info("Графики срезов для компонентов сохранены.")
+
+                except Exception as e:
+                    logger.warning(f"Не удалось построить графики срезов: {e}")
+
+                logger.info("--- 2.7. Анализ параллельных координат (Optuna) ---")
+                try:
+                    key_component_params = [
+                        'loss_',
+                        'gradient_terminal',
+                        'gradient_slot_1',
+                        'gradient_slot_2',
+                        'gradient_slot_3',
+                        'scheduler'
+                        'initializer',
+                        'projector',
+                        'updater'
+                    ]
+
+                    params_to_plot_parallel = [p for p in key_component_params if p in existing_params]
+
+                    if params_to_plot_parallel:
+                        fig_asr = plot_parallel_coordinate(study, params=params_to_plot_parallel, target=lambda t: t.values[0],
+                                                           target_name="ASR")
+                        fig_asr.update_layout(title="Параллельные координаты для поиска лучшего ASR")
+                        fig_asr.write_image(os.path.join(plots_dir, "optuna_parallel_coord_asr.png"))
+
+                        fig_l2 = plot_parallel_coordinate(study, params=params_to_plot_parallel, target=lambda t: t.values[1],
+                                                          target_name="L2 Norm")
+                        fig_l2.update_layout(title="Параллельные координаты для поиска меньшей L2-нормы")
+                        fig_l2.write_image(os.path.join(plots_dir, "optuna_parallel_coord_l2.png"))
+
+                        logger.info("Графики параллельных координат сохранены.")
+
+                except Exception as e:
+                    logger.warning(f"Не удалось построить график параллельных координат: {e}")
+        else:
+            logger.warning(f"Файл Optuna Study не найден по пути: {study_path}")
+    elif exp_config.get('search', {}).get('sampler') == 'evolutionary':
+        logger.info("--- 2. Генерация графика истории эволюции ---")
+        if not all_trials_df.empty:
+            plot_evolution_history(all_trials_df, os.path.join(plots_dir, "evolution_history.png"))
+            plot_component_dynamics(all_trials_df, os.path.join(plots_dir, "evolution_dynamics.png"))
+        else:
+            logger.warning("Нет данных для построения графика истории оптимизации и динамики компонентов.")
 
     if "pareto_front" in results_data and "all_trials" in results_data:
         logger.info("--- 2.5. Визуализация фронта Парето ---")
@@ -366,7 +526,7 @@ def main(results_path: str):
         for name, config in attacks_to_compare.items():
             logger.info(f"Генерация примеров для атаки: {name}...")
             config = _preprocess_config(config)
-            runner = AttackRunner(config)
+            runner = AttackRunner(config, model_wrappers)
             adv_images_batch = runner.attack(surrogate_model_wrapper, original_images_batch, labels_batch)
 
             with torch.no_grad():

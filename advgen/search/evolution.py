@@ -209,32 +209,65 @@ class EvolutionarySampler:
         op = random.choices(operations, weights=normalized_weights, k=1)[0]
 
         grad_space = self.random_sampler.space['components']['gradient']
+        decorator_options = grad_space['decorator_components']['values']
 
         if op == 'add':
-            new_decorator = self.random_sampler._sample_from_space(grad_space['decorator_components'])
             insert_pos = random.randint(0, len(grad_chain) - 1)
+
+            neighbor_before = grad_chain[insert_pos - 1]['name'] if insert_pos > 0 else None
+            neighbor_after = grad_chain[insert_pos]['name']
+
+            available_options = [
+                opt for opt in decorator_options
+                if opt['name'] != neighbor_before and opt['name'] != neighbor_after
+            ]
+            if not available_options:
+                return mutated_individual
+
+            new_decorator_spec = random.choice(available_options)
+            new_decorator = self.random_sampler._sample_from_space(new_decorator_spec)
+
             grad_chain.insert(insert_pos, new_decorator)
             print(f"Мутация: добавлен декоратор '{new_decorator['name']}' на позицию {insert_pos}.")
         elif op == 'remove':
-            decorator_indices = list(range(len(grad_chain) - 1))
-            if decorator_indices:
-                remove_pos = random.choice(decorator_indices)
-                removed_name = grad_chain[remove_pos]['name']
-                del grad_chain[remove_pos]
-                print(f"Мутация: удален декоратор '{removed_name}' с позиции {remove_pos}.")
+            safe_to_remove_indices = []
+            num_decorators = len(grad_chain) - 1
+
+            for i in range(num_decorators):
+                neighbor_before_name = grad_chain[i - 1]['name'] if i > 0 else None
+                neighbor_after_name = grad_chain[i + 1]['name']
+
+                if neighbor_before_name != neighbor_after_name:
+                    safe_to_remove_indices.append(i)
+
+            if not safe_to_remove_indices:
+                print("Мутация: удаление пропущено (нет безопасных кандидатов).")
+                return mutated_individual
+
+            remove_pos = random.choice(safe_to_remove_indices)
+            removed_name = grad_chain[remove_pos]['name']
+            del grad_chain[remove_pos]
+            print(f"Мутация: удален декоратор '{removed_name}' с позиции {remove_pos}.")
         elif op == 'swap':
             decorator_indices = list(range(len(grad_chain) - 1))
             if decorator_indices:
                 swap_pos = random.choice(decorator_indices)
+
+                neighbor_before = grad_chain[swap_pos - 1]['name'] if swap_pos > 0 else None
+                neighbor_after = grad_chain[swap_pos + 1]['name']
+
                 old_name = grad_chain[swap_pos]['name']
-                possible_new = [d for d in grad_space['decorator_components']['values'] if d['name'] != old_name]
-                if possible_new:
-                    new_decorator_spec = random.choice(possible_new)
-                    new_decorator = self.random_sampler._sample_from_space(new_decorator_spec)
-                    grad_chain[swap_pos] = new_decorator
-                    print(
-                        f"Мутация: заменен декоратор '{old_name}' на '{new_decorator['name']}' на позиции {swap_pos}."
-                    )
+                available_options = [
+                    opt for opt in decorator_options
+                    if opt['name'] != old_name and opt['name'] != neighbor_before and opt['name'] != neighbor_after
+                ]
+                if not available_options:
+                    return mutated_individual
+
+                new_decorator_spec = random.choice(available_options)
+                new_decorator = self.random_sampler._sample_from_space(new_decorator_spec)
+                grad_chain[swap_pos] = new_decorator
+                print(f"Мутация: заменен '{old_name}' на '{new_decorator['name']}' на позиции {swap_pos}.")
         elif op == 'change_terminal':
             old_name = grad_chain[-1]['name']
             possible_new = [t for t in grad_space['terminal_components']['values'] if t['name'] != old_name]

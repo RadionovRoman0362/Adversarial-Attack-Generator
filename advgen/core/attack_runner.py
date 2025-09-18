@@ -27,16 +27,6 @@ class AttackRunner:
         на основе конфигурационного словаря.
 
         :param attack_config: Словарь с полной конфигурацией атаки.
-                              Пример:
-                              {
-                                  "epsilon": 0.03,
-                                  "steps": 40,
-                                  "initializer": {"name": "random_linf"},
-                                  "loss": {"name": "cross_entropy"},
-                                  "gradient": {"name": "standard"},
-                                  "scheduler": {"name": "fixed", "params": {"step_size": 0.01}},
-                                  "projector": {"name": "linf"}
-                              }
         """
         self.config = attack_config
         self.all_model_wrappers = all_model_wrappers if all_model_wrappers else []

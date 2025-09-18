@@ -90,11 +90,21 @@ class RandomSampler:
 
                 head_config = self._sample_from_space(space_definition['decorator_components'])
                 current_node = head_config
+                last_decorator_name = head_config['name']
+
+                decorator_options = space_definition['decorator_components']['values']
 
                 for _ in range(num_decorators - 1):
-                    next_decorator_config = self._sample_from_space(space_definition['decorator_components'])
+                    available_options = [opt for opt in decorator_options if opt['name'] != last_decorator_name]
+                    if not available_options:
+                        break
+
+                    chosen_option = random.choice(available_options)
+                    next_decorator_config = self._sample_from_space(chosen_option)
+
                     current_node['wrapped'] = next_decorator_config
                     current_node = next_decorator_config
+                    last_decorator_name = next_decorator_config['name']
 
                 current_node['wrapped'] = terminal_config
 
