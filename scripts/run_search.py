@@ -118,6 +118,13 @@ def main(config_path: str):
     with open(config_path, 'r', encoding='utf-8') as f:
         exp_config = yaml.safe_load(f)
 
+    seed = exp_config.get('seed')
+    if seed is not None:
+        logger.info(f"Установка глобального random seed: {seed}")
+        set_seed(seed)
+    else:
+        logger.warning("Random seed не указан в конфигурации. Результаты могут быть невоспроизводимы.")
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Используемое устройство: {device}")
 
@@ -192,7 +199,14 @@ def main(config_path: str):
             l2_norm = results.get("avg_l2_norm", float('inf'))
             return asr, l2_norm
 
-        study = optuna.create_study(directions=["maximize", "minimize"])
+        from optuna.samplers import TPESampler
+        seed = exp_config.get('seed')
+        sampler_for_study = TPESampler(seed=seed) if seed is not None else TPESampler()
+
+        study = optuna.create_study(
+            directions=["maximize", "minimize"],
+            sampler=sampler_for_study
+        )
         study.optimize(objective, n_trials=num_trials)
 
         study_path = os.path.join(results_dir, f"optuna_study_{timestamp}.pkl")
