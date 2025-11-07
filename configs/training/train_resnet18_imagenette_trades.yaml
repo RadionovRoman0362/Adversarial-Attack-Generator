@@ -1,39 +1,59 @@
+# ====================================================================================
+# Конфигурация для обучения состязательно устойчивой модели с помощью TRADES.
+# Эта модель будет использоваться в качестве второго члена ансамбля при поиске
+# переносимых атак.
+#
+# Источник: Zhang, H., Yu, Y., Jiao, J., et al. (2019). Theoretically
+# Principled Trade-off between Robustness and Accuracy. ICML.
+# ====================================================================================
+
+# --- Модель и Данные ---
 model_name: "resnet18_imagenet"
 dataset_name: "imagenette"
 num_classes: 10
 data_dir: "./data"
 checkpoint_dir: "./checkpoints_imagenette_trades"
 
-epochs: 20
-batch_size: 64
+# --- Параметры обучения (аналогичны PGD-AT для сопоставимости) ---
+epochs: 70
+patience: 15
+batch_size: 128
 num_workers: 8
 device: "cuda"
 
+# --- Оптимизатор (SGD) ---
 optimizer:
-  name: "adam"
+  name: "sgd"
   params:
-    lr: 0.001
-    weight_decay: 0.0001
+    lr: 0.1
+    momentum: 0.9
+    weight_decay: 0.0005
 
+# --- Планировщик шага (CosineAnnealingLR) ---
 scheduler:
   name: "cosine"
   params:
-    T_max: 20 # Равно числу эпох
+    T_max: 70
 
+# --- Функция потерь TRADES ---
+# Указываем, что нужно использовать специальную функцию потерь.
+# Beta=6.0 - стандартное значение из оригинальной статьи TRADES.
 criterion:
   name: "trades"
   params:
     beta: 6.0
 
+# --- Конфигурация состязательного обучения ---
+# TRADES также требует внутреннюю PGD-атаку для нахождения
+# "внутренней" точки максимума. Используем ту же конфигурацию, что и для PGD-AT.
 adversarial_training:
   enabled: true
-  # PGD-7
   attack_config:
     epsilon: 0.03137 # 8/255
-    steps: 7
+    steps: 10
     initializer: { name: random_linf }
-    loss: { name: cross_entropy }
+    loss: { name: cross_entropy } # Внутренний PGD в TRADES использует CE
     gradient: { name: standard }
     updater: { name: sign }
     projector: { name: linf }
-    scheduler: { name: fixed, params: { step_size: 0.00784 } } # 2/255
+    scheduler: { name: fixed, params: { step_size: 0.00784 } } # 2/255 (alpha)

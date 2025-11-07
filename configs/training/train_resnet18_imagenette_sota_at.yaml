@@ -1,0 +1,57 @@
+# ====================================================================================
+# Конфигурация для обучения СОСТЯЗАТЕЛЬНО УСТОЙЧИВОЙ ("крепкой") модели
+# ResNet-18 на ImageNette.
+#
+# Источник: Конфигурация основана на лучших практиках из сообщества по
+# состязательной робастности (RobustBench, Madry et al., Gowal et al.).
+# Статья Merkle et al. (2021) намеренно не использовала состязательное
+# обучение, поэтому данный конфиг необходим для создания более сложной цели.
+# ====================================================================================
+
+# --- Модель и Данные ---
+model_name: "resnet18_imagenet"
+dataset_name: "imagenette"
+num_classes: 10
+data_dir: "./data"
+checkpoint_dir: "./checkpoints_imagenette_sota_at"
+
+# --- Параметры обучения ---
+# Количество эпох и batch size взяты как стандартные для качественного
+# состязательного обучения.
+epochs: 70
+patience: 15
+batch_size: 128
+num_workers: 8
+device: "cuda"
+
+# --- Оптимизатор (SGD) ---
+# SGD с моментом является стандартом де-факто для состязательного обучения.
+# Параметры (lr, momentum, weight_decay) являются общепринятыми.
+optimizer:
+  name: "sgd"
+  params:
+    lr: 0.1
+    momentum: 0.9
+    weight_decay: 0.0005
+
+# --- Планировщик шага (CosineAnnealingLR) ---
+# Косинусный планировщик хорошо зарекомендовал себя для стабильного обучения.
+scheduler:
+  name: "cosine"
+  params:
+    T_max: 70 # Равно общему числу эпох
+
+# --- Конфигурация состязательного обучения (PGD-AT) ---
+# Используется стандартная атака PGD-10 с эпсилон 8/255 для генерации
+# примеров "на лету" в процессе обучения.
+adversarial_training:
+  enabled: true
+  attack_config:
+    epsilon: 0.03137 # 8/255
+    steps: 10
+    initializer: { name: random_linf }
+    loss: { name: cross_entropy }
+    gradient: { name: standard }
+    updater: { name: sign }
+    projector: { name: linf }
+    scheduler: { name: fixed, params: { step_size: 0.00784 } } # 2/255 (alpha)

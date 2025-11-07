@@ -1,0 +1,51 @@
+# ====================================================================================
+# Конфигурация для обучения ЕСТЕСТВЕННОЙ ("мягкой") модели ResNet-18 на ImageNette.
+#
+# Источник: Merkle, F., Samsinger, M., & Schöttle, P. (2021). Pruning in the Face of Adversaries.
+# arXiv preprint arXiv:2108.08560.
+#
+# Параметры точно воспроизводят setup из этой статьи для обеспечения сопоставимости
+# результатов.
+# ====================================================================================
+
+# --- Модель и Данные ---
+# Архитектура и датасет, указанные в Разделе 3.4 статьи.
+model_name: "resnet18_imagenet"
+dataset_name: "imagenette"
+num_classes: 10
+data_dir: "./data"
+checkpoint_dir: "./checkpoints_imagenette_natural"
+
+# --- Параметры обучения ---
+# Количество эпох и политика early stopping указаны в Разделе 3 статьи,
+# абзац перед Разделом 4: "We allow up to 150 epochs for training and implement
+# early stopping observing the validation loss and patience of ... 15 epochs".
+epochs: 150
+patience: 15 # Параметр для механизма Early Stopping в скрипте обучения
+
+# Batch size не указан в статье, используем стандартное значение для ResNet на ImageNette.
+batch_size: 128
+num_workers: 8
+device: "cuda"
+
+# --- Оптимизатор (Adam) ---
+# Указан в Разделе 3.6 Implementation: "We optimize the models with the ADAM
+# algorithm... with an initial learning rate of 0.001".
+optimizer:
+  name: "adam"
+  params:
+    lr: 0.001
+
+# --- Планировщик шага (ReduceLROnPlateau) ---
+# В Разделе 4 статьи указано: "...we apply dynamic learning rate scheduling,
+# multiplying the learning rate by 0.3 after a patience period of twelve epochs".
+# Это в точности соответствует планировщику ReduceLROnPlateau.
+scheduler:
+  name: "reducelronplateau"
+  params:
+    # mode='min': Снижать LR, когда метрика (val_loss) перестает уменьшаться.
+    mode: "min"
+    # factor=0.3: Множитель, на который будет уменьшен LR (lr = lr * factor).
+    factor: 0.3
+    # patience=12: Количество эпох без улучшения, после которого LR будет снижен.
+    patience: 12

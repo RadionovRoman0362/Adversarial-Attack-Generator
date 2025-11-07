@@ -101,7 +101,10 @@ class Trainer:
             train_loss, train_acc = self._train_one_epoch(epoch)
             val_metrics = self._validate_one_epoch()
 
-            self.scheduler.step()
+            if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                self.scheduler.step(val_metrics.get('val_loss', 0))
+            else:
+                self.scheduler.step()
 
             logger.info(
                 f"Эпоха {epoch}/{epochs} | "

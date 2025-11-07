@@ -72,6 +72,8 @@ def get_scheduler(optimizer: optim.Optimizer, config: Dict[str, Any]) -> optim.l
         return optim.lr_scheduler.MultiStepLR(optimizer, **params)
     elif name == 'cosine':
         return optim.lr_scheduler.CosineAnnealingLR(optimizer, **params)
+    elif name == 'reducelronplateau':
+        return optim.lr_scheduler.ReduceLROnPlateau(optimizer, **params)
     else:
         raise NotImplementedError(f"Планировщик '{name}' не поддерживается.")
 
@@ -160,8 +162,9 @@ def main(config_path: str, resume_path: Optional[str] = None):
     trainer.best_acc = best_acc
 
     num_epochs = config['epochs']
+    patience = config.get('patience', 10)
     logger.info(f"Запуск обучения с эпохи {start_epoch + 1} до {num_epochs}")
-    trainer.train(epochs=num_epochs)
+    trainer.train(epochs=num_epochs, patience=patience)
 
 
 if __name__ == '__main__':
