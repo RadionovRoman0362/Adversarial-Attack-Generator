@@ -38,6 +38,7 @@ from advgen.utils.data_loader import get_dataloader, DATASET_STATS
 from advgen.utils.logging_setup import setup_logging
 from advgen.search.evolution import EvolutionarySampler
 from advgen.utils.visualization import TensorBoardLogger
+from advgen.utils.reproducibility import set_seed
 
 
 def find_pareto_front(all_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
