@@ -30,14 +30,14 @@ components:
         - name: momentum
           params:
             decay_factor: { type: fixed, value: 1.0 }
-        - name: smooth_adv
-          params:
-            num_samples: { type: range_int, min: 3, max: 15 }
-            noise_stddev: { type: range_float, min: 0.05, max: 0.25 }
+#        - name: smooth_adv
+#          params:
+#            num_samples: { type: range_int, min: 3, max: 15 }
+#            noise_stddev: { type: range_float, min: 0.05, max: 0.25 }
         - name: ti
           params:
             kernel_size: { type: choice, values: [3, 5, 7] }
-        - name: ensemble
+#        - name: ensemble
         - name: sgm
 
 gradient_optuna:
@@ -50,14 +50,14 @@ gradient_optuna:
       - name: momentum
         params:
           decay_factor: { type: fixed, value: 1.0 }
-      - name: smooth_adv
-        params:
-          num_samples: { type: range_int, min: 3, max: 15 }
-          noise_stddev: { type: range_float, min: 0.05, max: 0.25 }
+#      - name: smooth_adv
+#        params:
+#          num_samples: { type: range_int, min: 3, max: 15 }
+#          noise_stddev: { type: range_float, min: 0.05, max: 0.25 }
       - name: ti
         params:
           kernel_size: { type: choice, values: [ 3, 5, 7 ] }
-      - name: ensemble
+#      - name: ensemble
       - name: sgm
   terminal_options:
     type: choice

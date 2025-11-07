@@ -1,0 +1,49 @@
+# --- Модель и Данные ---
+model_name: "wrn-28-10"
+dataset_name: "cifar10"
+num_classes: 10
+data_dir: "./data"
+checkpoint_dir: "./checkpoints_cifar10_wrn2810_trades"
+
+# --- Параметры обучения ---
+epochs: 200
+batch_size: 128
+num_workers: 8
+device: "cuda"
+
+# --- Оптимизатор (SGD) ---
+optimizer:
+  name: "sgd"
+  params:
+    lr: 0.1
+    momentum: 0.9
+    weight_decay: 0.0005
+    nesterov: true
+
+# --- Планировщик шага (MultiStepLR) ---
+scheduler:
+  name: "multisteplr"
+  params:
+    milestones: [100, 150]
+    gamma: 0.1
+
+# --- Функция потерь для обучения модели ---
+criterion:
+  name: "trades"
+  params:
+    beta: 6.0
+
+# --- Конфигурация состязательного обучения ---
+adversarial_training:
+  enabled: true
+  # Внутренняя атака для TRADES - тот же PGD-10
+  attack_config:
+    norm: "linf"
+    epsilon: 0.03137 # 8/255
+    steps: 10
+    initializer: { name: random_linf }
+    loss: { name: cross_entropy }
+    gradient: { name: standard }
+    updater: { name: sign }
+    projector: { name: linf }
+    scheduler: { name: fixed, params: { step_size: 0.00784 } } # Шаг атаки 2/255

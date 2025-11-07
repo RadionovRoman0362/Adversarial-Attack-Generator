@@ -2,7 +2,8 @@ import torch.nn as nn
 import torchvision.models as models
 from typing import Dict, Any
 
-from . import resnet_cifar  # Убедитесь, что импортируете ваш кастомный resnet
+from . import resnet_cifar
+from . import wide_resnet
 
 
 def get_model(config: Dict[str, Any]) -> nn.Module:
@@ -19,8 +20,12 @@ def get_model(config: Dict[str, Any]) -> nn.Module:
     elif model_name == 'resnet18_imagenet':
         return resnet_cifar.resnet18_imagenet_arch(num_classes, pretrained)
 
+    elif model_name == 'wrn-28-10':
+        dropRate = config.get('dropRate', 0.3)
+        return wide_resnet.wrn_28_10(num_classes=num_classes, dropRate=dropRate)
+
     else:
         raise NotImplementedError(f"Модель '{model_name}' не поддерживается.")
 
 
-__all__ = ["get_model", "resnet_cifar"]
+__all__ = ["get_model", "resnet_cifar", "wide_resnet"]

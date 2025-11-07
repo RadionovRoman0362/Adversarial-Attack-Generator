@@ -10,7 +10,7 @@
 search:
   sampler: "evolutionary"
   params:
-    population_size: 20   # Размер популяции (больше = лучше исследование, но медленнее)
+    population_size: 5   # Размер популяции (больше = лучше исследование, но медленнее)
     mutation_rate: 0.8    # Высокая вероятность мутации, т.к. мы ищем новые структуры
     tournament_size: 3
     # Многоцелевая оптимизация: максимизировать ASR, минимизировать заметность (L2)
@@ -31,7 +31,7 @@ search:
       - type: "parameter"     # Тонкая настройка параметров
         probability: 0.4
 
-num_trials: 15          # Количество поколений для эволюции
+num_trials: 5          # Количество поколений для эволюции
 num_eval_samples: 1000  # На скольких примерах оценивать каждую атаку
 search_space_path: "configs/search_space.yaml"
 results_dir: "./results_composite_evo" # Уникальная папка для результатов

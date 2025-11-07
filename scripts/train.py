@@ -68,6 +68,8 @@ def get_scheduler(optimizer: optim.Optimizer, config: Dict[str, Any]) -> optim.l
         return optim.lr_scheduler.StepLR(optimizer, **params)
     elif name == 'multisteplr':
         return optim.lr_scheduler.MultiStepLR(optimizer, **params)
+    elif name == 'multisteplr':
+        return optim.lr_scheduler.MultiStepLR(optimizer, **params)
     elif name == 'cosine':
         return optim.lr_scheduler.CosineAnnealingLR(optimizer, **params)
     else:
