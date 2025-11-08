@@ -2,7 +2,7 @@
 Главный скрипт для запуска процесса обучения модели.
 
 Пример запуска из корневой директории проекта:
-> python scripts/train.py --config configs/training/train_resnet18_cifar10.yaml
+> python scripts/train.py --config configs/training/train_resnet18_imagenette_natural.yaml
 """
 
 import argparse

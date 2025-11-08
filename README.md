@@ -76,7 +76,7 @@
 
 2.  **Запустить скрипт обучения:**
     ```bash
-    python scripts/train.py --config configs/training/train_resnet18_cifar10.yaml
+    python scripts/train.py --config configs/training/train_resnet18_imagenette_natural.yaml
     ```
     Вы увидите прогресс-бары для каждой эпохи. Процесс займет некоторое время в зависимости от вашего GPU.
 
