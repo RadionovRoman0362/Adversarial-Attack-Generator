@@ -14,7 +14,6 @@ from typing import Dict, Any, Optional
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import torchvision.models as models
 import yaml
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -161,10 +160,11 @@ def main(config_path: str, resume_path: Optional[str] = None):
     )
     trainer.best_acc = best_acc
 
-    num_epochs = config['epochs']
+    total_epochs = config['epochs']
     patience = config.get('patience', 10)
-    logger.info(f"Запуск обучения с эпохи {start_epoch + 1} до {num_epochs}")
-    trainer.train(epochs=num_epochs, patience=patience)
+
+    logger.info(f"Запуск обучения с эпохи {start_epoch + 1} до {total_epochs}")
+    trainer.train(total_epochs=total_epochs, patience=patience, start_epoch=start_epoch)
 
 
 if __name__ == '__main__':

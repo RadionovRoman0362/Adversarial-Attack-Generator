@@ -87,17 +87,17 @@ class Trainer:
         logger.info(f"Тренер инициализирован. Устройство: {self.device}. "
                     f"Чекпоинты будут сохраняться в '{self.checkpoint_dir}'.")
 
-    def train(self, epochs: int, patience: int = 5):
+    def train(self, total_epochs: int, patience: int = 5, start_epoch: int = 0):
         """
         Запускает полный цикл обучения на заданное количество эпох.
         """
-        logger.info(f"Начало обучения на {epochs} эпох.")
+        logger.info(f"Начало обучения. Всего эпох: {total_epochs}, старт с эпохи: {start_epoch + 1}.")
 
         best_robust_acc = 0.0
         best_clean_acc = 0.0
         epochs_without_improvement = 0
 
-        for epoch in range(1, epochs + 1):
+        for epoch in range(start_epoch + 1, total_epochs + 1):
             train_loss, train_acc = self._train_one_epoch(epoch)
             val_metrics = self._validate_one_epoch()
 
@@ -107,7 +107,7 @@ class Trainer:
                 self.scheduler.step()
 
             logger.info(
-                f"Эпоха {epoch}/{epochs} | "
+                f"Эпоха {epoch}/{total_epochs} | "
                 f"Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f} | "
                 f"Val Loss: {val_metrics.get('val_loss'):.4f}, Val Acc: {val_metrics.get('val_acc'):.4f} | "
                 f"Robust Val Loss: {val_metrics.get('robust_loss', 0):.4f}, "
