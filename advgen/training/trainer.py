@@ -83,6 +83,9 @@ class Trainer:
         self.validation_criterion = nn.CrossEntropyLoss()
 
         self.best_acc = 0.0
+        self.best_robust_acc = 0.0
+        self.best_clean_acc = 0.0
+        self.epochs_without_improvement = 0
         os.makedirs(self.checkpoint_dir, exist_ok=True)
         logger.info(f"Тренер инициализирован. Устройство: {self.device}. "
                     f"Чекпоинты будут сохраняться в '{self.checkpoint_dir}'.")
@@ -92,10 +95,6 @@ class Trainer:
         Запускает полный цикл обучения на заданное количество эпох.
         """
         logger.info(f"Начало обучения. Всего эпох: {total_epochs}, старт с эпохи: {start_epoch + 1}.")
-
-        best_robust_acc = 0.0
-        best_clean_acc = 0.0
-        epochs_without_improvement = 0
 
         for epoch in range(start_epoch + 1, total_epochs + 1):
             train_loss, train_acc = self._train_one_epoch(epoch)
@@ -117,18 +116,24 @@ class Trainer:
             current_robust_acc = val_metrics.get('robust_acc', val_metrics['val_acc'])
             current_clean_acc = val_metrics.get('val_acc')
 
-            is_best = (current_robust_acc > best_robust_acc) or (current_clean_acc > best_clean_acc)
+            is_best = False
+            if self.val_attack_runner:  # Если есть робастная валидация
+                if current_robust_acc > self.best_robust_acc:
+                    is_best = True
+            elif current_clean_acc > self.best_clean_acc:
+                is_best = True
+
             if is_best:
-                if current_robust_acc > best_robust_acc:
-                    best_robust_acc = current_robust_acc
-                if current_clean_acc > best_clean_acc:
-                    best_clean_acc = current_clean_acc
+                if current_robust_acc > self.best_robust_acc:
+                    self.best_robust_acc = current_robust_acc
+                if current_clean_acc > self.best_clean_acc:
+                    self.best_clean_acc = current_clean_acc
                 self.best_acc = val_metrics.get('val_acc')
-                epochs_without_improvement = 0
-                logger.info(f"*** Новая лучшая точность на валидации: {self.best_acc:.4f}! "
-                            f"Сохранение модели... ***")
+                self.epochs_without_improvement = 0
+                logger.info(f"*** Новое лучшее значение! Robust Acc: {self.best_robust_acc:.4f}, "
+                            f"Clean Acc: {self.best_clean_acc:.4f}. Сохранение модели... ***")
             else:
-                epochs_without_improvement += 1
+                self.epochs_without_improvement += 1
 
             save_checkpoint(
                 state={
@@ -137,12 +142,15 @@ class Trainer:
                     'optimizer': self.optimizer.state_dict(),
                     'scheduler': self.scheduler.state_dict(),
                     'best_acc': self.best_acc,
+                    'best_robust_acc': self.best_robust_acc,
+                    'best_clean_acc': self.best_clean_acc,
+                    'epochs_without_improvement': self.epochs_without_improvement,
                 },
                 is_best=is_best,
                 path=self.checkpoint_dir
             )
 
-            if epochs_without_improvement >= patience:
+            if self.epochs_without_improvement >= patience:
                 logger.info(f"Обучение остановлено досрочно: робастная точность не улучшалась {patience} эпох.")
                 break
 

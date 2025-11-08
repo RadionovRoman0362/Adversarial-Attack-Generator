@@ -67,8 +67,6 @@ def get_scheduler(optimizer: optim.Optimizer, config: Dict[str, Any]) -> optim.l
         return optim.lr_scheduler.StepLR(optimizer, **params)
     elif name == 'multisteplr':
         return optim.lr_scheduler.MultiStepLR(optimizer, **params)
-    elif name == 'multisteplr':
-        return optim.lr_scheduler.MultiStepLR(optimizer, **params)
     elif name == 'cosine':
         return optim.lr_scheduler.CosineAnnealingLR(optimizer, **params)
     elif name == 'reducelronplateau':
@@ -119,7 +117,7 @@ def main(config_path: str, resume_path: Optional[str] = None):
     if adv_train_config and adv_train_config.get('enabled'):
         logger.info("Активировано состязательное обучение. Создание AttackRunner...")
         attack_config = adv_train_config['attack_config']
-        attack_runner = AttackRunner(attack_config)
+        attack_runner = AttackRunner(attack_config, all_model_wrappers=None)
 
     logger.info(f"Создание модели: {config['model_name']}")
     model = get_model(config).to(device)
@@ -131,19 +129,6 @@ def main(config_path: str, resume_path: Optional[str] = None):
     scheduler = get_scheduler(optimizer, config)
 
     criterion = get_criterion(config)
-
-    if resume_path:
-        logger.info(f"Возобновление обучения с чекпоинта: {resume_path}")
-        try:
-            checkpoint_data = load_checkpoint(resume_path, model, optimizer, scheduler)
-            start_epoch = checkpoint_data['start_epoch']
-            best_acc = checkpoint_data['best_acc']
-        except FileNotFoundError as e:
-            logger.error(e)
-            return
-    else:
-        start_epoch = 0
-        best_acc = 0.0
 
     trainer = Trainer(
         model=model,
@@ -158,13 +143,40 @@ def main(config_path: str, resume_path: Optional[str] = None):
         dataset_stats=stats,
         val_attack_runner=attack_runner
     )
-    trainer.best_acc = best_acc
+
+    start_epoch = 0
+
+    if resume_path:
+        logger.info(f"Возобновление обучения с чекпоинта: {resume_path}")
+        try:
+            checkpoint_data = load_checkpoint(resume_path, model, optimizer, scheduler)
+
+            start_epoch = checkpoint_data.get('start_epoch', 0)
+
+            trainer.best_acc = checkpoint_data.get('best_acc', 0.0)
+            trainer.best_robust_acc = checkpoint_data.get('best_robust_acc', 0.0)
+            trainer.best_clean_acc = checkpoint_data.get('best_clean_acc', 0.0)
+            trainer.epochs_without_improvement = checkpoint_data.get('epochs_without_improvement', 0)
+
+            logger.info(f"Состояние Trainer успешно восстановлено.")
+            logger.info(f"  - Продолжение с эпохи: {start_epoch + 1}")
+            logger.info(f"  - Текущий счетчик patience: {trainer.epochs_without_improvement}")
+            logger.info(f"  - Лучшая робастная точность на данный момент: {trainer.best_robust_acc:.4f}")
+
+        except (FileNotFoundError, TypeError) as e:
+            logger.error(f"Не удалось загрузить чекпоинт: {e}")
+            logger.warning("Обучение будет начато с нуля.")
+            start_epoch = 0
 
     total_epochs = config['epochs']
-    patience = config.get('patience', 10)
+    patience = config.get('patience', 5)
 
-    logger.info(f"Запуск обучения с эпохи {start_epoch + 1} до {total_epochs}")
-    trainer.train(total_epochs=total_epochs, patience=patience, start_epoch=start_epoch)
+    logger.info(f"Запуск обучения (до {total_epochs} эпох с patience={patience}).")
+    trainer.train(
+        total_epochs=total_epochs,
+        patience=patience,
+        start_epoch=start_epoch
+    )
 
 
 if __name__ == '__main__':

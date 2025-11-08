@@ -5,7 +5,7 @@ AttackRunner "собирает" состязательную атаку из р�
 на основе предоставленной конфигурации и выполняет ее на батче данных.
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 import torch
 
@@ -21,7 +21,7 @@ class AttackRunner:
     Класс-оркестратор, который выполняет итеративную состязательную атаку.
     """
 
-    def __init__(self, attack_config: Dict[str, Any], all_model_wrappers: List[ModelWrapper]):
+    def __init__(self, attack_config: Dict[str, Any], all_model_wrappers: Optional[List[ModelWrapper]] = None):
         """
         Инициализирует AttackRunner, создавая все необходимые компоненты
         на основе конфигурационного словаря.
