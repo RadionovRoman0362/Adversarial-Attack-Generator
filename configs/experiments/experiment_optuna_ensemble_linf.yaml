@@ -1,0 +1,41 @@
+# ====================================================================================
+# Эксперимент 3.2: Поиск переносимой атаки на ансамбль (Optuna)
+#
+# Цель: Использовать байесовскую оптимизацию для нахождения компромисса
+# между универсальностью атаки (ASR на ансамбле) и её незаметностью.
+# ====================================================================================
+
+seed: 42
+num_trials: 200
+num_eval_samples: 1000
+search_space_path: "configs/search_space.yaml"
+results_dir: "./results/exp3_ensemble_linf_optuna"
+
+search:
+  sampler: "optuna"
+  # Многокритериальная оптимизация: Max ASR, Min L2
+  direction: ["maximize", "minimize"]
+
+norm: "linf"
+epsilon: 0.06274
+steps: 40
+
+# --- Ансамбль Целевых Моделей ---
+models:
+  - model_name: "resnet18_imagenet"
+    num_classes: 10
+    checkpoint_path: "./checkpoints_imagenette_natural/model_best.pth.tar"
+
+  - model_name: "resnet18_imagenet"
+    num_classes: 10
+    checkpoint_path: "./checkpoints_imagenette_sota_at/model_best.pth.tar"
+
+  - model_name: "resnet18_imagenet"
+    num_classes: 10
+    checkpoint_path: "./checkpoints_imagenette_trades/model_best.pth.tar"
+
+dataset:
+  name: "imagenette"
+  data_dir: "./data"
+  batch_size: 64
+  num_workers: 8

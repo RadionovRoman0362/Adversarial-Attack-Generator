@@ -1,0 +1,45 @@
+# ====================================================================================
+# Эксперимент 3.1: Поиск переносимой атаки на ансамбль (Random Search)
+#
+# Цель: Попытаться найти универсальную атаку, работающую против трех разных
+# архитектур защиты одновременно, используя простой случайный перебор.
+#
+# Ансамбль моделей:
+# 1. Natural (Обычная)
+# 2. PGD-AT (Состязательно обученная, SOTA)
+# 3. TRADES (Состязательно обученная, альтернативный метод)
+# ====================================================================================
+
+seed: 42
+num_trials: 200
+num_eval_samples: 1000
+search_space_path: "configs/search_space.yaml"
+results_dir: "./results/exp3_ensemble_linf_random"
+
+search:
+  sampler: "random"
+  direction: "maximize" # Максимизируем средний ASR по ансамблю
+
+norm: "linf"
+epsilon: 0.06274 # 16/255 (Сильное возмущение для переносимости)
+steps: 40
+
+# --- Ансамбль Целевых Моделей ---
+models:
+  - model_name: "resnet18_imagenet"
+    num_classes: 10
+    checkpoint_path: "./checkpoints_imagenette_natural/model_best.pth.tar"
+
+  - model_name: "resnet18_imagenet"
+    num_classes: 10
+    checkpoint_path: "./checkpoints_imagenette_sota_at/model_best.pth.tar"
+
+  - model_name: "resnet18_imagenet"
+    num_classes: 10
+    checkpoint_path: "./checkpoints_imagenette_trades/model_best.pth.tar"
+
+dataset:
+  name: "imagenette"
+  data_dir: "./data"
+  batch_size: 64 # Уменьшаем batch_size, т.к. в памяти теперь 3 модели
+  num_workers: 8

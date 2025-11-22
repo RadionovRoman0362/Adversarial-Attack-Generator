@@ -1,0 +1,63 @@
+# ====================================================================================
+# Эксперимент 1.3: Сравнение методов поиска (Evolutionary Algorithm)
+#
+# Цель: Оценить эффективность эволюционного алгоритма для поиска
+# оптимальных по Парето L-inf атак.
+#
+# Целевая модель: Состязательно обученная ResNet-18 (SOTA AT).
+# ====================================================================================
+
+# --- Общие параметры эксперимента ---
+seed: 42
+num_trials: 20          # Количество поколений (20 поколений * 10 особей = 200 оценок)
+num_eval_samples: 1000
+search_space_path: "configs/search_space.yaml"
+results_dir: "./results/exp1_sota_linf_evo"
+
+# --- Параметры Поиска ---
+search:
+  sampler: "evolutionary"
+  params:
+    population_size: 10   # Размер популяции
+    mutation_rate: 0.8    # Вероятность применения мутации к потомку
+    tournament_size: 3    # Количество индивидов в турнире для отбора
+
+    # Многокритериальная оптимизация (NSGA-II)
+    objectives:
+      - metric: "attack_success_rate"
+        direction: "maximize"
+      - metric: "avg_l2_norm"
+        direction: "minimize"
+
+    # Ограничение: отсеиваем совсем неработающие атаки
+    constraints:
+      - metric: "attack_success_rate"
+        type: "greater_than"
+        threshold: 0.05
+
+    # Стратегия мутации: основной упор на изменение структуры
+    mutation_strategy:
+      - type: "structural"
+        probability: 0.6
+      - type: "parameter"
+        probability: 0.4
+
+# --- Параметры Атаки (общие для всех прогонов) ---
+norm: "linf"
+epsilon: 0.06274 # 16/255
+steps: 40
+
+# --- Целевая Модель ---
+model:
+  model_name: "resnet18_imagenet"
+  num_classes: 10
+  checkpoint_path: "./checkpoints_imagenette_sota_at/model_best.pth.tar"
+
+# --- Датасет для Атаки ---
+dataset:
+  name: "imagenette"
+  data_dir: "./data"
+  batch_size: 128
+  # Для эволюционного алгоритма лучше использовать 1 поток во избежание
+  # проблем с вложенным мультипроцессингом (если Parallel используется внутри)
+  num_workers: 4

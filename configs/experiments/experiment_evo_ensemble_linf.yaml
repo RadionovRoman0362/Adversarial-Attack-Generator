@@ -1,0 +1,61 @@
+# ====================================================================================
+# Эксперимент 3.3: Поиск переносимой атаки на ансамбль (Evolutionary)
+#
+# Цель: Применить генетические операторы (скрещивание и структурную мутацию)
+# для создания сложной композитной атаки, способной пробить защиту всех
+# моделей в ансамбле.
+# ====================================================================================
+
+seed: 42
+num_trials: 20 # Поколений
+num_eval_samples: 1000
+search_space_path: "configs/search_space.yaml"
+results_dir: "./results/exp3_ensemble_linf_evo"
+
+search:
+  sampler: "evolutionary"
+  params:
+    population_size: 10
+    mutation_rate: 0.8
+    tournament_size: 3
+
+    objectives:
+      - metric: "attack_success_rate"
+        direction: "maximize"
+      - metric: "avg_l2_norm"
+        direction: "minimize"
+
+    constraints:
+      - metric: "attack_success_rate"
+        type: "greater_than"
+        threshold: 0.05
+
+    mutation_strategy:
+      - type: "structural"
+        probability: 0.6
+      - type: "parameter"
+        probability: 0.4
+
+norm: "linf"
+epsilon: 0.06274
+steps: 40
+
+# --- Ансамбль Целевых Моделей ---
+models:
+  - model_name: "resnet18_imagenet"
+    num_classes: 10
+    checkpoint_path: "./checkpoints_imagenette_natural/model_best.pth.tar"
+
+  - model_name: "resnet18_imagenet"
+    num_classes: 10
+    checkpoint_path: "./checkpoints_imagenette_sota_at/model_best.pth.tar"
+
+  - model_name: "resnet18_imagenet"
+    num_classes: 10
+    checkpoint_path: "./checkpoints_imagenette_trades/model_best.pth.tar"
+
+dataset:
+  name: "imagenette"
+  data_dir: "./data"
+  batch_size: 64
+  num_workers: 4 # Меньше воркеров для стабильности с Evolution
